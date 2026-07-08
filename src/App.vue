@@ -13,8 +13,10 @@ import {
   NButton,
   NCheckbox,
   NConfigProvider,
+  NSelect,
 } from 'naive-ui';
 
+import { createForge } from './three/forge.js';
 import { createStarField } from './three/starfield.js';
 
 // CS2 品质档位（配色见设计图）与最新汰换规则（2025.10 起）：
@@ -138,49 +140,85 @@ RARITY_ORDER.forEach((rk) => {
   })
 })
 
-const outcomes = {
-  profit: {
-    cls: 'profit',
-    icon: 'AK',
-    name: 'AK-47 | 火蛇',
-    tag: '隐秘',
-    color: '#eb4b4b',
-    title: '出了大货',
-    profit: '本次爆赚 +¥1,522',
-    value: '¥1,850',
-    wear: '略有磨损',
-    float: '0.083421',
-    particles: 96,
-    edge: '#ff4747',
-  },
-  small: {
-    cls: 'small',
-    icon: 'M4A4',
-    name: 'M4A4 | 皇帝',
-    tag: '保密',
-    color: '#8847ff',
-    title: '小赚一手',
-    profit: '本次小赚 +¥86',
-    value: '¥414',
-    wear: '久经沙场',
-    float: '0.214589',
-    particles: 54,
-    edge: '#8847ff',
-  },
-  loss: {
-    cls: 'loss',
-    icon: 'MP7',
-    name: 'MP7 | 笑一个',
-    tag: '军规',
-    color: '#4b69ff',
-    title: '这次手感一般',
-    profit: '本次未命中高价值产物 -¥241',
-    value: '¥87',
-    wear: '破损不堪',
-    float: '0.391204',
-    particles: 18,
-    edge: '#475569',
-  },
+// 各可汰换档位的基准单价（¥/件），用于估算投入成本
+const BASE_PRICE = {
+  consumer: 3,
+  industrial: 7,
+  milspec: 20,
+  restricted: 65,
+  classified: 220,
+  covert: 950,
+}
+
+const fmtMoney = (n) => Math.round(n).toLocaleString('en-US')
+
+// 严格按 CS2 汰换合同规则生成结果：
+// 1) 产出稀有度 = 输入稀有度的高一档；
+// 2) 具体产出皮肤随机（真实规则按来源收藏集概率，此处无收藏集数据，
+//    从高一档皮肤池随机抽取来模拟这一随机性）；
+// 3) 结果 float = 输入平均 float ×(wearMax-wearMin)+wearMin（逐皮肤磨损范围此处随机模拟）；
+// 4) 盈亏 = 随机产出皮肤的市场价值 − 投入成本，随机性来源于「出到哪一款皮肤」。
+function generateOutcome(items, count) {
+  const inKey = items[0][4]
+  const outKey = RARITY_ORDER[RARITY_ORDER.indexOf(inKey) + 1] || inKey
+  const pool = SKIN_POOL[outKey]
+  const pick = pool[(Math.random() * pool.length) | 0]
+
+  // float：CS2 磨损公式；无逐皮肤磨损范围数据，模拟一个合理的 [wmin, wmax]
+  const avg = items.reduce((s, m) => s + parseFloat(m[3]), 0) / items.length
+  const wmin = Math.random() * 0.06
+  const wmax = 0.55 + Math.random() * 0.45
+  const resultFloat = Math.min(0.999, avg * (wmax - wmin) + wmin)
+  const wear = wearTier(resultFloat)
+
+  // 盈亏：投入成本按输入档基准计，产出价值随机（模拟同档不同皮肤的价差）
+  const cost = BASE_PRICE[inKey] * count
+  const r = Math.random()
+  let factor
+  if (r < 0.45) factor = 0.12 + Math.random() * 0.55
+  else if (r < 0.72) factor = 0.7 + Math.random() * 0.45
+  else if (r < 0.93) factor = 1.15 + Math.random() * 1.4
+  else factor = 2.6 + Math.random() * 6
+  const value = Math.max(1, Math.round(cost * factor))
+  const diff = value - cost
+  const ratio = value / cost
+
+  let cls, title, profit
+  if (ratio >= 1.8) {
+    cls = 'profit'
+    title = '出了大货！'
+    profit = `本次爆赚 +¥${fmtMoney(diff)}`
+  } else if (ratio > 1.05) {
+    cls = 'small'
+    title = '小赚一手'
+    profit = `本次小赚 +¥${fmtMoney(diff)}`
+  } else if (ratio >= 0.9) {
+    cls = 'small'
+    title = '基本保本'
+    profit = diff >= 0 ? `基本持平 +¥${fmtMoney(diff)}` : `基本持平 -¥${fmtMoney(-diff)}`
+  } else {
+    cls = 'loss'
+    title = '这次亏了'
+    profit = `本次亏损 -¥${fmtMoney(-diff)}`
+  }
+
+  const color = RARITIES[outKey].color
+  return {
+    cls,
+    icon: pick[0],
+    name: pick[1],
+    tag: RARITIES[outKey].name.replace('级', ''),
+    color,
+    edge: color,
+    title,
+    profit,
+    value: `¥${fmtMoney(value)}`,
+    cost: `¥${fmtMoney(cost)}`,
+    wear: wear.name,
+    wearColor: wear.color,
+    float: resultFloat.toFixed(6),
+    particles: cls === 'profit' ? 110 : cls === 'small' ? 56 : 20,
+  }
 }
 
 const themeOverrides = {
@@ -213,7 +251,13 @@ const confirmChecked = ref(false)
 const dragItem = ref(null)
 const dropActive = ref(false)
 
-const current = ref('profit')
+// 本次汰换结果（严格按 CS2 规则生成，见 generateOutcome）
+const PLACEHOLDER_OUTCOME = {
+  cls: 'small', icon: '—', name: '等待汰换', tag: '', color: '#8fa2c0', edge: '#8fa2c0',
+  title: '', profit: '', value: '¥0', cost: '¥0', wear: '—', wearColor: '#8fa2c0',
+  float: '0.000000', particles: 40,
+}
+const currentOutcome = ref(PLACEHOLDER_OUTCOME)
 const running = ref(false)
 
 const showBuilder = ref(true)
@@ -236,7 +280,30 @@ const stageRef = ref(null)
 const bgRef = ref(null)
 let starField = null
 
-const cfg = computed(() => outcomes[current.value])
+// 汰换特效动效切换：classic=经典合成（原效果）/ forge=熔炉锻造（three.js）
+const animMode = ref('forge')
+const animOptions = [
+  { label: '熔炉锻造', value: 'forge' },
+  { label: '经典合成', value: 'classic' },
+]
+const forgeRef = ref(null)
+let forge = null
+const showForge = ref(false)
+const forgePhase = ref('')
+let anvilAudio = null
+let igniteAudio = null
+
+function playSound(el) {
+  if (!el) return
+  try {
+    el.currentTime = 0
+    el.play().catch(() => {})
+  } catch {
+    /* 忽略自动播放限制 */
+  }
+}
+
+const cfg = computed(() => currentOutcome.value)
 
 const available = computed(() =>
   inventory.filter(
@@ -274,6 +341,22 @@ function isTradeable(m) {
 function rarityName(m) {
   return RARITIES[m[4]].name
 }
+
+// CS2 磨损等级（Exterior）：区间与游戏一致（下含上不含），
+// 颜色贴近游戏内磨损条的绿→黄→橙→红渐变
+const WEAR_TIERS = [
+  { max: 0.07, name: '崭新出厂', color: '#4dd15a' },
+  { max: 0.15, name: '略有磨损', color: '#8fc63d' },
+  { max: 0.38, name: '久经沙场', color: '#e6c930' },
+  { max: 0.45, name: '破损不堪', color: '#e08a3c' },
+  { max: Infinity, name: '战痕累累', color: '#eb4b4b' },
+]
+function wearTier(f) {
+  return WEAR_TIERS.find((t) => f < t.max) || WEAR_TIERS[WEAR_TIERS.length - 1]
+}
+function wearFor(m) {
+  return wearTier(parseFloat(m[3]))
+}
 function canAdd(m) {
   if (!isTradeable(m)) return false
   if (!activeRarity.value) return true
@@ -291,17 +374,6 @@ function lockReason(m) {
 watch(canConfirmItems, (ok) => {
   if (!ok) confirmChecked.value = false
 })
-
-function setOutcome(type) {
-  current.value = type
-  toast(
-    type === 'loss'
-      ? '已切换为亏损结果演示'
-      : type === 'small'
-      ? '已切换为小赚/保本结果演示'
-      : '已切换为大赚结果演示',
-  )
-}
 
 function addItem(m) {
   if (selected.value.includes(m)) return
@@ -363,6 +435,16 @@ async function startCraft() {
   if (running.value || !canConfirmItems.value) return
   running.value = true
   showBuilder.value = false
+  // 按 CS2 汰换规则生成本次结果（随机产出皮肤 → 盈亏随之产生）
+  currentOutcome.value = generateOutcome(selected.value, currentNeed.value)
+  if (animMode.value === 'forge') {
+    startForge()
+    return
+  }
+  startClassic()
+}
+
+async function startClassic() {
   showProcess.value = true
   craftCards.value = selected.value.slice()
   cardEls.length = 0
@@ -411,7 +493,7 @@ function explode() {
   flashBoom.value = true
   edgeColor.value = c.edge
   edgeOn.value = true
-  if (current.value !== 'loss') stageShake.value = true
+  if (cfg.value.cls !== 'loss') stageShake.value = true
   for (let i = 0; i < c.particles; i++) particle(c.color)
   setTimeout(() => {
     flashBoom.value = false
@@ -459,10 +541,40 @@ function showResultView() {
   running.value = false
 }
 
+async function startForge() {
+  showForge.value = true
+  forgePhase.value = ''
+  const colors = selected.value.map((m) => m[2])
+  await nextTick()
+  if (!forge) forge = createForge(forgeRef.value)
+  forge.resize()
+  forge.play({
+    count: currentNeed.value,
+    colors,
+    resultColor: cfg.value.color,
+    onIgnite: () => playSound(igniteAudio),
+    onPhase: (text) => (forgePhase.value = text),
+    onStrike: () => {
+      playSound(anvilAudio)
+      edgeColor.value = cfg.value.edge
+      edgeOn.value = true
+      setTimeout(() => (edgeOn.value = false), 2400)
+    },
+    onDone: () => {
+      forgePhase.value = ''
+      showForge.value = false
+      showResultView()
+    },
+  })
+}
+
 function resetAll() {
   showBuilder.value = true
   showProcess.value = false
   showResult.value = false
+  showForge.value = false
+  forgePhase.value = ''
+  forge?.stop()
   edgeOn.value = false
   running.value = false
   selected.value = []
@@ -482,11 +594,18 @@ function setCardEl(el, i) {
 
 onMounted(() => {
   if (bgRef.value) starField = createStarField(bgRef.value)
+  anvilAudio = new Audio('/sfx/anvil-strike.wav')
+  anvilAudio.volume = 0.9
+  anvilAudio.preload = 'auto'
+  igniteAudio = new Audio('/sfx/forge-ignite.wav')
+  igniteAudio.volume = 0.5
+  igniteAudio.preload = 'auto'
 })
 
 onBeforeUnmount(() => {
   clearTimeout(toastTimer)
   starField?.dispose()
+  forge?.dispose()
 })
 </script>
 
@@ -496,27 +615,16 @@ onBeforeUnmount(() => {
       <div class="top">
         <div class="brand">元游猫 <span>汰换合同交互原型</span></div>
         <div class="top-actions">
-          <button
-            class="ghost"
-            :class="{ active: current === 'profit' }"
-            @click="setOutcome('profit')"
-          >
-            赚的效果
-          </button>
-          <button
-            class="ghost"
-            :class="{ active: current === 'small' }"
-            @click="setOutcome('small')"
-          >
-            小赚/保本
-          </button>
-          <button
-            class="ghost"
-            :class="{ active: current === 'loss' }"
-            @click="setOutcome('loss')"
-          >
-            亏的效果
-          </button>
+          <div class="anim-switch">
+            <span class="anim-label">动效</span>
+            <n-select
+              v-model:value="animMode"
+              :options="animOptions"
+              size="small"
+              class="anim-select"
+              :consistent-menu-width="false"
+            />
+          </div>
         </div>
       </div>
       <main class="layout">
@@ -527,7 +635,7 @@ onBeforeUnmount(() => {
               <div class="eyebrow">TRADE UP CONTRACT</div>
               <div class="title">汰换合同</div>
               <div class="subtitle">
-                基于 CS 汰换合同的交互：选择材料 → 5 秒打造 → 亏赚差异化结果
+                严格遵循 CS2 汰换规则：10 件同品质随机产出高一档皮肤，盈亏由产物价值决定
               </div>
             </div>
             <div class="status-pill">
@@ -564,8 +672,8 @@ onBeforeUnmount(() => {
                   <div class="code">{{ m[0] }}</div>
                   <div class="nm">{{ m[1] }}</div>
                   <div class="meta">
-                    <span class="rarity" :style="{ color: m[2] }">{{
-                      rarityName(m)
+                    <span class="rarity" :style="{ color: wearFor(m).color }">{{
+                      wearFor(m).name
                     }}</span>
                     <span class="fl">{{ m[3] }}</span>
                   </div>
@@ -611,8 +719,8 @@ onBeforeUnmount(() => {
                     <div class="code">{{ m[0] }}</div>
                     <div class="nm">{{ m[1] }}</div>
                     <div class="meta">
-                      <span class="rarity" :style="{ color: m[2] }">{{
-                        rarityName(m)
+                      <span class="rarity" :style="{ color: wearFor(m).color }">{{
+                        wearFor(m).name
                       }}</span>
                       <span class="fl">{{ m[3] }}</span>
                     </div>
@@ -662,6 +770,15 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
+          <canvas
+            class="forge-layer"
+            :class="{ show: showForge }"
+            ref="forgeRef"
+          ></canvas>
+          <div class="forge-phase" :class="{ show: showForge && !!forgePhase }">
+            {{ forgePhase }}
+          </div>
+
           <div class="flash" :class="{ boom: flashBoom }"></div>
           <div
             class="edge"
@@ -685,10 +802,10 @@ onBeforeUnmount(() => {
                   <label>参考估值</label><strong>{{ cfg.value }}</strong>
                 </div>
                 <div class="stat">
-                  <label>投入成本</label><strong>¥328</strong>
+                  <label>投入成本</label><strong>{{ cfg.cost }}</strong>
                 </div>
                 <div class="stat">
-                  <label>磨损</label><strong>{{ cfg.wear }}</strong>
+                  <label>磨损</label><strong :style="{ color: cfg.wearColor }">{{ cfg.wear }}</strong>
                 </div>
                 <div class="stat">
                   <label>Float</label><strong>{{ cfg.float }}</strong>
@@ -732,6 +849,67 @@ onBeforeUnmount(() => {
   height: 100%;
   z-index: 1;
   pointer-events: none;
+}
+
+/* 右上角：切换汰换动效 */
+.anim-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.anim-label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  color: #94a3b8;
+}
+.anim-select {
+  width: 152px;
+}
+.top-divider {
+  width: 1px;
+  height: 22px;
+  background: rgba(255, 255, 255, 0.14);
+  margin: 0 4px;
+}
+
+/* three.js「熔炉锻造」覆盖层 */
+.forge-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 5;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.45s ease;
+}
+.forge-layer.show {
+  opacity: 1;
+}
+.forge-phase {
+  position: absolute;
+  left: 50%;
+  bottom: 46px;
+  transform: translate(-50%, 12px);
+  z-index: 6;
+  border: 1px solid rgba(255, 179, 71, 0.4);
+  background: rgba(30, 12, 4, 0.55);
+  backdrop-filter: blur(6px);
+  border-radius: 999px;
+  color: #ffd9a0;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 900;
+  letter-spacing: 0.22em;
+  text-shadow: 0 0 18px rgba(255, 140, 50, 0.6);
+  opacity: 0;
+  pointer-events: none;
+  transition: 0.4s ease;
+}
+.forge-phase.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 
 /* ===== 汰换构建区：左右两栏 ===== */
@@ -785,7 +963,7 @@ onBeforeUnmount(() => {
   max-height: 520px;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 4px;
+  padding: 8px 4px 0 0;
   align-content: start;
 }
 .inv-list::-webkit-scrollbar {
@@ -961,7 +1139,7 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding-right: 4px;
+  padding: 8px 4px 0 0;
 }
 /* 右侧选中项与左侧材料卡保持完全一致的样式 */
 .contract-item {
