@@ -1,0 +1,438 @@
+- generic [ref=e4]:
+  - generic [ref=e5]:
+    - generic [ref=e6]: 元游猫 汰换合同交互原型
+    - generic [ref=e8]:
+      - generic [ref=e9]: 动效
+      - generic [ref=e12] [cursor=pointer]:
+        - generic "合同签订" [ref=e466]:
+          - generic [ref=e14]: 合同签订
+        - img "loading" [ref=e15]:
+          - img [ref=e20]
+  - main [ref=e22]:
+    - generic [ref=e23]:
+      - generic [ref=e24]:
+        - generic [ref=e25]:
+          - generic [ref=e26]: TRADE UP CONTRACT
+          - generic [ref=e27]: 汰换合同
+          - generic [ref=e28]: 严格遵循 CS2 汰换规则：10 件同品质随机产出高一档皮肤，盈亏由产物价值决定
+        - generic [ref=e29]:
+          - strong [ref=e30]: 10/10
+          - generic [ref=e31]: 材料已齐，勾选后确认
+      - generic:
+        - generic:
+          - generic:
+            - generic:
+              - generic: "46"
+              - generic: 件物品符合汰换资格
+            - generic: 拖拽同一品质材料汰换升级：普通~保密级需 10 件、隐秘级需 5 件
+          - generic:
+            - generic:
+              - generic: 品质不符
+              - generic: SAWED
+              - generic: 截短霰弹枪 | 蓝钢
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.3355"
+            - generic:
+              - generic: 品质不符
+              - generic: P90
+              - generic: P90 | 灼热
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.3574"
+            - generic:
+              - generic: 品质不符
+              - generic: UMP
+              - generic: UMP-45 | 铸铁
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.3794"
+            - generic:
+              - generic: 品质不符
+              - generic: MP7
+              - generic: MP7 | 军团
+              - generic:
+                - generic: 破损不堪
+                - generic: "0.4013"
+            - generic:
+              - generic: 品质不符
+              - generic: USP
+              - generic: USP-S | 森林迷彩
+              - generic:
+                - generic: 破损不堪
+                - generic: "0.4232"
+            - generic:
+              - generic: 品质不符
+              - generic: MP5
+              - generic: MP5-SD | 静默
+              - generic:
+                - generic: 破损不堪
+                - generic: "0.4452"
+            - generic:
+              - generic: 品质不符
+              - generic: CZ
+              - generic: CZ75 | 蓝钢
+              - generic:
+                - generic: 战痕累累
+                - generic: "0.4671"
+            - generic:
+              - generic: 品质不符
+              - generic: DEAGLE
+              - generic: 沙鹰 | 网格纹
+              - generic:
+                - generic: 战痕累累
+                - generic: "0.4890"
+            - generic:
+              - generic: 品质不符
+              - generic: FAMAS
+              - generic: 法玛斯 | 塑胶
+              - generic:
+                - generic: 战痕累累
+                - generic: "0.5109"
+            - generic:
+              - generic: 品质不符
+              - generic: GALIL
+              - generic: Galil AR | 部落
+              - generic:
+                - generic: 战痕累累
+                - generic: "0.5329"
+            - generic:
+              - generic: 品质不符
+              - generic: AK
+              - generic: AK-47 | 蓝色层压板
+              - generic:
+                - generic: 崭新出厂
+                - generic: "0.0048"
+            - generic:
+              - generic: 品质不符
+              - generic: M4
+              - generic: M4A1-S | 蓝相
+              - generic:
+                - generic: 崭新出厂
+                - generic: "0.0267"
+            - generic:
+              - generic: 品质不符
+              - generic: AWP
+              - generic: AWP | 电路板
+              - generic:
+                - generic: 崭新出厂
+                - generic: "0.0487"
+            - generic:
+              - generic: 品质不符
+              - generic: USP
+              - generic: USP-S | 森林
+              - generic:
+                - generic: 略有磨损
+                - generic: "0.0706"
+            - generic:
+              - generic: 品质不符
+              - generic: GLOCK
+              - generic: 格洛克 | 蓝裂纹
+              - generic:
+                - generic: 略有磨损
+                - generic: "0.0925"
+            - generic:
+              - generic: 品质不符
+              - generic: P250
+              - generic: P250 | 瓦解
+              - generic:
+                - generic: 略有磨损
+                - generic: "0.1144"
+            - generic:
+              - generic: 品质不符
+              - generic: SG
+              - generic: SG 553 | 阿罗哈
+              - generic:
+                - generic: 略有磨损
+                - generic: "0.1364"
+            - generic:
+              - generic: 品质不符
+              - generic: TEC9
+              - generic: Tec-9 | 以撒
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.1583"
+            - generic:
+              - generic: 品质不符
+              - generic: FIVE7
+              - generic: Five-SeveN | 涂鸦
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.1802"
+            - generic:
+              - generic: 品质不符
+              - generic: AUG
+              - generic: AUG | 蓝翼
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.2022"
+            - generic:
+              - generic: 品质不符
+              - generic: AK
+              - generic: AK-47 | 黑色魅影
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.2241"
+            - generic:
+              - generic: 品质不符
+              - generic: M4
+              - generic: M4A4 | 蜂巢
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.2460"
+            - generic:
+              - generic: 品质不符
+              - generic: AWP
+              - generic: AWP | 姆罗兹
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.2679"
+            - generic:
+              - generic: 品质不符
+              - generic: DEAGLE
+              - generic: 沙鹰 | 蓝焰
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.2899"
+            - generic:
+              - generic: 品质不符
+              - generic: USP
+              - generic: USP-S | 印花集
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.3118"
+            - generic:
+              - generic: 品质不符
+              - generic: P90
+              - generic: P90 | 死亡之握
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.3337"
+            - generic:
+              - generic: 品质不符
+              - generic: GLOCK
+              - generic: 格洛克 | 燃料喷射
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.3557"
+            - generic:
+              - generic: 品质不符
+              - generic: M4S
+              - generic: M4A1-S | 赛博安全
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.3776"
+            - generic:
+              - generic: 品质不符
+              - generic: P250
+              - generic: P250 | 妹妹
+              - generic:
+                - generic: 破损不堪
+                - generic: "0.3995"
+            - generic:
+              - generic: 品质不符
+              - generic: MAC
+              - generic: MAC-10 | 霓虹骑士
+              - generic:
+                - generic: 破损不堪
+                - generic: "0.4214"
+            - generic:
+              - generic: 品质不符
+              - generic: AK
+              - generic: AK-47 | 表面淬火
+              - generic:
+                - generic: 破损不堪
+                - generic: "0.4434"
+            - generic:
+              - generic: 品质不符
+              - generic: M4
+              - generic: M4A4 | 龙王
+              - generic:
+                - generic: 战痕累累
+                - generic: "0.4653"
+            - generic:
+              - generic: 品质不符
+              - generic: AWP
+              - generic: AWP | 巨兽
+              - generic:
+                - generic: 战痕累累
+                - generic: "0.4872"
+            - generic:
+              - generic: 品质不符
+              - generic: DEAGLE
+              - generic: 沙鹰 | 印花集
+              - generic:
+                - generic: 战痕累累
+                - generic: "0.5092"
+            - generic:
+              - generic: 品质不符
+              - generic: USP
+              - generic: USP-S | 枪响人亡
+              - generic:
+                - generic: 战痕累累
+                - generic: "0.5311"
+            - generic:
+              - generic: 品质不符
+              - generic: GLOCK
+              - generic: 格洛克 | 渐变之色
+              - generic:
+                - generic: 崭新出厂
+                - generic: "0.0030"
+            - generic:
+              - generic: 品质不符
+              - generic: M4S
+              - generic: M4A1-S | 机械工业
+              - generic:
+                - generic: 崭新出厂
+                - generic: "0.0250"
+            - generic:
+              - generic: 品质不符
+              - generic: SSG
+              - generic: SSG 08 | 血腥之网
+              - generic:
+                - generic: 崭新出厂
+                - generic: "0.0469"
+            - generic:
+              - generic: 品质不符
+              - generic: P90
+              - generic: P90 | 亚洲毒龙
+              - generic:
+                - generic: 崭新出厂
+                - generic: "0.0688"
+            - generic:
+              - generic: 品质不符
+              - generic: UMP
+              - generic: UMP-45 | 主要控制
+              - generic:
+                - generic: 略有磨损
+                - generic: "0.0907"
+            - generic:
+              - generic: 品质不符
+              - generic: AK
+              - generic: AK-47 | 火神
+              - generic:
+                - generic: 略有磨损
+                - generic: "0.1127"
+            - generic:
+              - generic: 品质不符
+              - generic: M4
+              - generic: M4A4 | 二西莫夫
+              - generic:
+                - generic: 略有磨损
+                - generic: "0.1346"
+            - generic:
+              - generic: 品质不符
+              - generic: AWP
+              - generic: AWP | 巨龙传说
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.1565"
+            - generic:
+              - generic: 品质不符
+              - generic: AK2
+              - generic: AK-47 | 一发入魂
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.1785"
+            - generic:
+              - generic: 品质不符
+              - generic: DEAGLE
+              - generic: 沙鹰 | 烈焰
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.2004"
+            - generic:
+              - generic: 品质不符
+              - generic: M4S
+              - generic: M4A1-S | 玛卡巴卡
+              - generic:
+                - generic: 久经沙场
+                - generic: "0.2223"
+          - generic:
+            - button "重置":
+              - generic: 重置
+            - button "一键添加":
+              - generic: 一键添加
+        - generic:
+          - generic:
+            - generic:
+              - generic "点击移除":
+                - generic: ✕
+                - generic: P2000
+                - generic: P2000 | 手电
+                - generic:
+                  - generic: 略有磨损
+                  - generic: "0.1162"
+              - generic "点击移除":
+                - generic: ✕
+                - generic: MP9
+                - generic: MP9 | 军团
+                - generic:
+                  - generic: 略有磨损
+                  - generic: "0.1382"
+              - generic "点击移除":
+                - generic: ✕
+                - generic: NEGEV
+                - generic: 内格夫 | 沙丘
+                - generic:
+                  - generic: 久经沙场
+                  - generic: "0.1601"
+              - generic "点击移除":
+                - generic: ✕
+                - generic: NOVA
+                - generic: 新星 | 多边形
+                - generic:
+                  - generic: 久经沙场
+                  - generic: "0.1820"
+              - generic "点击移除":
+                - generic: ✕
+                - generic: XM
+                - generic: XM1014 | 蓝钢
+                - generic:
+                  - generic: 久经沙场
+                  - generic: "0.2039"
+              - generic "点击移除":
+                - generic: ✕
+                - generic: SCAR
+                - generic: SCAR-20 | 石板
+                - generic:
+                  - generic: 久经沙场
+                  - generic: "0.2259"
+              - generic "点击移除":
+                - generic: ✕
+                - generic: MAG7
+                - generic: MAG-7 | 灰烬
+                - generic:
+                  - generic: 久经沙场
+                  - generic: "0.2478"
+              - generic "点击移除":
+                - generic: ✕
+                - generic: G3
+                - generic: G3SG1 | 沙漠风暴
+                - generic:
+                  - generic: 久经沙场
+                  - generic: "0.2697"
+              - generic "点击移除":
+                - generic: ✕
+                - generic: BIZON
+                - generic: PP-野牛 | 都市涂装
+                - generic:
+                  - generic: 久经沙场
+                  - generic: "0.2917"
+              - generic "点击移除":
+                - generic: ✕
+                - generic: DUAL
+                - generic: 双持贝瑞塔 | 军团
+                - generic:
+                  - generic: 久经沙场
+                  - generic: "0.3136"
+          - generic:
+            - checkbox "确认汰换物品" [checked]:
+              - generic:
+                - generic:
+                  - generic:
+                    - img
+              - generic: 确认汰换物品
+            - button "确认汰换" [active]:
+              - generic: 确认汰换
+      - generic: 呈递合同

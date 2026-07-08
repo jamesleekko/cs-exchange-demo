@@ -3,6 +3,8 @@
 // 产物：
 //   public/sfx/anvil-strike.wav  铁锤敲砧（冲击瞬态 + 低频重击 + 非谐金属泛音余韵）
 //   public/sfx/forge-ignite.wav  炉火升腾（低频轰鸣 whoosh + 火焰噼啪）
+//   public/sfx/pen-check.wav     签字笔打勾（笔尖划纸沙沙 + 收尾顿笔）
+//   public/sfx/paper-rustle.wav  合同纸张（落定/抽离的翻动摩擦声）
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -160,7 +162,104 @@ function makeForgeIgnite() {
   return out
 }
 
+// ---------- 签字笔打勾 ----------
+// 一个「勾」由两笔组成：短的下行小撇 + 长的上行主笔。
+// 声音本质是笔尖与纸张的摩擦噪声——带通后的白噪声，其「粗糙度」用一个
+// 快速抖动的低频调制来模拟笔尖颗粒感；两笔之间有极短停顿，收尾略微加重。
+function makePenCheck() {
+  const dur = 0.72
+  const N = Math.floor(SR * dur)
+  const out = new Float32Array(N)
+
+  // 一笔划：从 t0 起、持续 len 秒的摩擦噪声，音量由包络控制，
+  // press 控制下笔轻重（影响亮度与幅度）。
+  function stroke(t0, len, press) {
+    const s0 = Math.floor(t0 * SR)
+    const s1 = Math.min(N, Math.floor((t0 + len) * SR))
+    // 带通：两级一阶差分/积分近似，突出中高频「沙沙」
+    let hp = 0
+    let lp = 0
+    let prev = 0
+    for (let i = s0; i < s1; i++) {
+      const u = (i - s0) / (s1 - s0) // 0→1
+      // 起笔快速上扬、收笔平滑落下的钟形包络，收笔端略微拖尾
+      const env = Math.pow(Math.sin(Math.PI * Math.min(1, u * 1.05)), 0.8)
+      // 笔尖颗粒：60~90Hz 的粗糙抖动叠加随机，形成划纸的「颗粒摩擦」
+      const grain = 0.6 + 0.4 * Math.sin(2 * Math.PI * 74 * (i / SR)) * (Math.random() * 0.8 + 0.2)
+      const white = Math.random() * 2 - 1
+      hp = white - prev
+      prev = white
+      lp += 0.22 * (hp - lp) // 一阶低通，柔化高频毛刺
+      out[i] += lp * grain * env * press
+    }
+  }
+
+  // 第一笔：短促下行小撇
+  stroke(0.02, 0.12, 0.55)
+  // 第二笔：主笔上行，更长更重
+  stroke(0.2, 0.34, 1.0)
+
+  // 收尾顿笔：主笔末端一个轻微的低频「顿」，让勾有个落点
+  const tapAt = 0.5
+  const tapDec = 0.05
+  const ts = Math.floor(tapAt * SR)
+  for (let i = ts; i < N; i++) {
+    const t = (i - ts) / SR
+    out[i] += 0.28 * Math.exp(-t / tapDec) * Math.sin(2 * Math.PI * 190 * t)
+  }
+
+  for (let i = 0; i < N; i++) out[i] = softClip(out[i], 1.05)
+  normalize(out, 0.8)
+  fadeEdges(out, 4, 60)
+  return out
+}
+
+// ---------- 合同纸张 ----------
+// 纸张翻动/抽离：宽带摩擦噪声，经缓慢起落的包络与若干随机「哗啦」小爆点，
+// 整体偏干、短促，模拟一张纸被展开又抽走的窸窣声。
+function makePaperRustle() {
+  const dur = 0.9
+  const N = Math.floor(SR * dur)
+  const out = new Float32Array(N)
+
+  // 底层持续摩擦噪声：带通白噪声，包络两头轻中间略强
+  let hp = 0
+  let prev = 0
+  for (let i = 0; i < N; i++) {
+    const u = i / N
+    const env = Math.sin(Math.PI * u) * 0.6
+    const white = Math.random() * 2 - 1
+    hp = white - prev
+    prev = white
+    out[i] += hp * env * 0.5
+  }
+
+  // 随机「哗啦」小爆点：纸面折痕受力的瞬间摩擦
+  const bursts = 14
+  for (let b = 0; b < bursts; b++) {
+    const start = Math.random() * (dur - 0.08)
+    const amp = 0.12 + Math.random() * 0.22
+    const dec = 0.01 + Math.random() * 0.035
+    const s0 = Math.floor(start * SR)
+    const end = Math.min(N, s0 + Math.floor(dec * 5 * SR))
+    let lp = 0
+    for (let i = s0; i < end; i++) {
+      const t = (i - s0) / SR
+      const white = Math.random() * 2 - 1
+      lp += 0.4 * (white - lp)
+      out[i] += amp * lp * Math.exp(-t / dec)
+    }
+  }
+
+  for (let i = 0; i < N; i++) out[i] = softClip(out[i], 1.0)
+  normalize(out, 0.6)
+  fadeEdges(out, 20, 90)
+  return out
+}
+
 mkdirSync(OUT_DIR, { recursive: true })
 writeFileSync(resolve(OUT_DIR, 'anvil-strike.wav'), encodeWav(makeAnvilStrike()))
 writeFileSync(resolve(OUT_DIR, 'forge-ignite.wav'), encodeWav(makeForgeIgnite()))
+writeFileSync(resolve(OUT_DIR, 'pen-check.wav'), encodeWav(makePenCheck()))
+writeFileSync(resolve(OUT_DIR, 'paper-rustle.wav'), encodeWav(makePaperRustle()))
 console.log('生成完成 →', OUT_DIR)

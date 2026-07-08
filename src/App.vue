@@ -17,6 +17,7 @@ import {
 } from 'naive-ui';
 
 import { createForge } from './three/forge.js';
+import { createContract } from './three/contract.js';
 import { createStarField } from './three/starfield.js';
 
 // CS2 品质档位（配色见设计图）与最新汰换规则（2025.10 起）：
@@ -280,10 +281,11 @@ const stageRef = ref(null)
 const bgRef = ref(null)
 let starField = null
 
-// 汰换特效动效切换：classic=经典合成（原效果）/ forge=熔炉锻造（three.js）
+// 汰换特效动效切换：classic=经典合成（原效果）/ forge=熔炉锻造（three.js）/ contract=合同签订（three.js）
 const animMode = ref('forge')
 const animOptions = [
   { label: '熔炉锻造', value: 'forge' },
+  { label: '合同签订', value: 'contract' },
   { label: '经典合成', value: 'classic' },
 ]
 const forgeRef = ref(null)
@@ -292,6 +294,14 @@ const showForge = ref(false)
 const forgePhase = ref('')
 let anvilAudio = null
 let igniteAudio = null
+
+// 「合同签订」three.js 特效
+const contractRef = ref(null)
+let contract = null
+const showContract = ref(false)
+const contractPhase = ref('')
+let penAudio = null
+let paperAudio = null
 
 function playSound(el) {
   if (!el) return
@@ -441,6 +451,10 @@ async function startCraft() {
     startForge()
     return
   }
+  if (animMode.value === 'contract') {
+    startContract()
+    return
+  }
   startClassic()
 }
 
@@ -568,6 +582,33 @@ async function startForge() {
   })
 }
 
+async function startContract() {
+  showContract.value = true
+  contractPhase.value = ''
+  // 合同逐条列出的材料：名称 + 品质色
+  const items = selected.value.map((m) => ({ name: m[1], color: m[2] }))
+  await nextTick()
+  if (!contract) contract = createContract(contractRef.value)
+  contract.resize()
+  contract.play({
+    items,
+    resultTag: cfg.value.tag,
+    onPhase: (text) => (contractPhase.value = text),
+    onPaper: () => playSound(paperAudio),
+    onSign: () => playSound(penAudio),
+    onStamp: () => {
+      edgeColor.value = cfg.value.edge
+      edgeOn.value = true
+      setTimeout(() => (edgeOn.value = false), 1600)
+    },
+    onDone: () => {
+      contractPhase.value = ''
+      showContract.value = false
+      showResultView()
+    },
+  })
+}
+
 function resetAll() {
   showBuilder.value = true
   showProcess.value = false
@@ -575,6 +616,9 @@ function resetAll() {
   showForge.value = false
   forgePhase.value = ''
   forge?.stop()
+  showContract.value = false
+  contractPhase.value = ''
+  contract?.stop()
   edgeOn.value = false
   running.value = false
   selected.value = []
@@ -600,12 +644,19 @@ onMounted(() => {
   igniteAudio = new Audio('/sfx/forge-ignite.wav')
   igniteAudio.volume = 0.5
   igniteAudio.preload = 'auto'
+  penAudio = new Audio('/sfx/pen-check.wav')
+  penAudio.volume = 0.85
+  penAudio.preload = 'auto'
+  paperAudio = new Audio('/sfx/paper-rustle.wav')
+  paperAudio.volume = 0.6
+  paperAudio.preload = 'auto'
 })
 
 onBeforeUnmount(() => {
   clearTimeout(toastTimer)
   starField?.dispose()
   forge?.dispose()
+  contract?.dispose()
 })
 </script>
 
@@ -779,6 +830,15 @@ onBeforeUnmount(() => {
             {{ forgePhase }}
           </div>
 
+          <canvas
+            class="forge-layer"
+            :class="{ show: showContract }"
+            ref="contractRef"
+          ></canvas>
+          <div class="forge-phase contract-phase" :class="{ show: showContract && !!contractPhase }">
+            {{ contractPhase }}
+          </div>
+
           <div class="flash" :class="{ boom: flashBoom }"></div>
           <div
             class="edge"
@@ -910,6 +970,13 @@ onBeforeUnmount(() => {
 .forge-phase.show {
   opacity: 1;
   transform: translate(-50%, 0);
+}
+/* 「合同签订」阶段标签：改用暖金/羊皮纸配色，区别于熔炉的火焰橙 */
+.forge-phase.contract-phase {
+  border-color: rgba(212, 175, 55, 0.5);
+  background: rgba(20, 16, 8, 0.6);
+  color: #ffe9b0;
+  text-shadow: 0 0 16px rgba(212, 175, 55, 0.6);
 }
 
 /* ===== 汰换构建区：左右两栏 ===== */
