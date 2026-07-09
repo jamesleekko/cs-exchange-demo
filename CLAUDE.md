@@ -13,30 +13,32 @@ npm run dev        # Vite dev server on :5173 (auto-opens; allows *.trycloudflar
 npm run build      # production build to dist/
 npm run preview    # serve the built dist/
 
-node scripts/gen-anvil-sound.mjs   # regenerate public/sfx/*.wav (procedural audio, no deps)
+node scripts/gen-anvil-sound.mjs         # regenerate forge/anvil WAVs in public/sfx/ (procedural audio, no deps)
+node scripts/gen-pen-check-variants.mjs  # generate pen-check sound variants into public/temp/ for audition
 ```
 
-There is no linter or test runner configured.
+There is no linter or test runner configured. Validate changes manually with `npm run dev` and run `npm run build` before submitting. Commits use conventional prefixes (`feat:`, `fix:`).
 
 ## Architecture
 
-The entire application lives in **`src/App.vue`** (~1300 lines). `src/main.js` just mounts it. When changing behavior, expect to edit App.vue.
+The entire application lives in **`src/App.vue`** (~1350 lines, Vue 3 `<script setup>`, naive-ui components under a `darkTheme` + `themeOverrides` config provider). `src/main.js` just mounts it. When changing behavior, expect to edit App.vue.
 
 App.vue is organized as:
 - **Game data** (top of `<script setup>`): `RARITIES` (7 CS2 quality tiers with color + `need` count), `RARITY_ORDER`, `SKIN_POOL` (skins per tier), `BASE_PRICE`. These are the source of truth for the trade-up rules.
 - **Core rules**: `generateOutcome(items, count)` produces the trade-up result strictly following CS2 logic — output tier is one above input, output skin is random from the next tier's pool, and profit/loss is a weighted random factor over input cost. `wearTier(float)` maps a float to the CS2 exterior grade (崭新出厂…战痕累累).
 - **Selection state & validation**: `selected`, `activeRarity`, `currentNeed`, `canAdd`/`addItem`/`lockReason` enforce the rules — all inputs must share one quality; `need>0` tiers only (non-tradeable `gold` has `need=0`); `consumer`–`classified` need 10, `covert` needs 5.
-- **View flow**: three mutually exclusive phases toggled by refs — `showBuilder` → (`showProcess` or `showForge`) → `showResult`. `startCraft()` computes the outcome first, then dispatches to `startClassic()` or `startForge()` based on `animMode`.
-- **Two animation modes** (`animMode`, default `'forge'`): `'classic'` is pure DOM/CSS card-collapse + particle explosion driven by `setTimeout` in App.vue; `'forge'` delegates to the three.js module below.
+- **View flow**: mutually exclusive phases toggled by refs — `showBuilder` → (`showProcess` | `showForge` | `showContract`) → `showResult`. `startCraft()` computes the outcome first, then dispatches to `startClassic()`, `startForge()`, or `startContract()` based on `animMode`.
+- **Three animation modes** (`animMode`, default `'forge'`): `'classic'` is pure DOM/CSS card-collapse + particle explosion driven by `setTimeout` in App.vue; `'forge'` (熔炉锻造) and `'contract'` (合同签订) delegate to the three.js modules below.
 
 Trade-up rule invariant: if you change tier counts, tradeability, or add tiers, update **both** `RARITIES` and `RARITY_ORDER` (and `SKIN_POOL`/`BASE_PRICE` for any new tradeable tier) together.
 
 ### three.js modules (`src/three/`)
 
 - **`forge.js`** — the "熔炉锻造" confirm animation. `createForge(canvas)` returns `{ play, stop, resize, dispose }`. `play(opts)` runs one full timed sequence (投料 → 升火 → 落锤 → 产物) and drives the outside world through callbacks: `onIgnite`, `onPhase(text)`, `onStrike`, `onReveal`, `onDone`. App.vue uses these callbacks to play sounds, flash the stage edge, and switch to the result view. Uses `three/addons` postprocessing (UnrealBloom) and custom particle shaders.
+- **`contract.js`** — the "合同签订" confirm animation, same handle shape (`{ play, stop, resize, dispose }`) and callback pattern (`onPhase`, `onPaper`, `onSign`, `onStamp`, `onDone`). The contract page is drawn frame-by-frame on an offscreen 2D canvas (Chinese text, per-item rarity colors, animated check-mark stroke and stamp) and mapped as a texture onto a 3D plane.
 - **`starfield.js`** — ambient background particles. `createStarField(canvas)` returns `{ dispose }`.
 
-Both are imperative handles created in `onMounted` and cleaned up in `onBeforeUnmount`/`resetAll`. Always call `dispose()` when tearing down to avoid leaking WebGL contexts and RAF loops.
+All are imperative handles created lazily/in `onMounted` and cleaned up in `onBeforeUnmount`/`resetAll`. Always call `dispose()` when tearing down to avoid leaking WebGL contexts and RAF loops. When adding a new animation mode, follow this same handle + timed-callback pattern and wire it into `animMode`/`animOptions`/`startCraft()`/`resetAll()`.
 
 ### Styles
 
@@ -45,4 +47,4 @@ Both are imperative handles created in `onMounted` and cleaned up in `onBeforeUn
 
 ### Assets
 
-`public/sfx/anvil-strike.wav` and `forge-ignite.wav` are generated procedurally by `scripts/gen-anvil-sound.mjs` (16-bit PCM synthesized from oscillators/noise, no third-party libs). Regenerate with that script rather than editing the WAVs.
+Everything in `public/sfx/` and `public/temp/` is procedurally generated 16-bit PCM (synthesized from oscillators/noise, no third-party libs) — regenerate via the `scripts/*.mjs` generators rather than editing WAVs by hand. `public/temp/` holds audition variants (e.g. 20 stamp candidates); the chosen one is copied into `public/sfx/` for actual use.

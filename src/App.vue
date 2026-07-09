@@ -302,6 +302,7 @@ const showContract = ref(false)
 const contractPhase = ref('')
 let penAudio = null
 let paperAudio = null
+let stampAudio = null
 
 function playSound(el) {
   if (!el) return
@@ -567,7 +568,7 @@ async function startForge() {
     colors,
     resultColor: cfg.value.color,
     onIgnite: () => playSound(igniteAudio),
-    onPhase: (text) => (forgePhase.value = text),
+    onPhase: () => {}, // 不显示阶段文字（如“投料/升火/落锤”）
     onStrike: () => {
       playSound(anvilAudio)
       edgeColor.value = cfg.value.edge
@@ -593,10 +594,11 @@ async function startContract() {
   contract.play({
     items,
     resultTag: cfg.value.tag,
-    onPhase: (text) => (contractPhase.value = text),
+    onPhase: () => {}, // 不显示阶段文字（如“呈递合同/核对材料/签字/盖章”）
     onPaper: () => playSound(paperAudio),
     onSign: () => playSound(penAudio),
     onStamp: () => {
+      playSound(stampAudio)
       edgeColor.value = cfg.value.edge
       edgeOn.value = true
       setTimeout(() => (edgeOn.value = false), 1600)
@@ -644,12 +646,15 @@ onMounted(() => {
   igniteAudio = new Audio('/sfx/forge-ignite.wav')
   igniteAudio.volume = 0.5
   igniteAudio.preload = 'auto'
-  penAudio = new Audio('/sfx/pen-check.wav')
+  penAudio = new Audio('/sfx/mark.wav')
   penAudio.volume = 0.85
   penAudio.preload = 'auto'
   paperAudio = new Audio('/sfx/paper-rustle.wav')
   paperAudio.volume = 0.6
   paperAudio.preload = 'auto'
+  stampAudio = new Audio('/sfx/stamp.wav')
+  stampAudio.volume = 0.85
+  stampAudio.preload = 'auto'
 })
 
 onBeforeUnmount(() => {

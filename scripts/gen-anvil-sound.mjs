@@ -5,6 +5,7 @@
 //   public/sfx/forge-ignite.wav  炉火升腾（低频轰鸣 whoosh + 火焰噼啪）
 //   public/sfx/pen-check.wav     签字笔打勾（笔尖划纸沙沙 + 收尾顿笔）
 //   public/sfx/paper-rustle.wav  合同纸张（落定/抽离的翻动摩擦声）
+//   public/sfx/stamp-impact.wav  印章落下（低频木质冲击 + 墨垫压扁瞬态）
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -163,54 +164,55 @@ function makeForgeIgnite() {
 }
 
 // ---------- 签字笔打勾 ----------
-// 一个「勾」由两笔组成：短的下行小撇 + 长的上行主笔。
-// 声音本质是笔尖与纸张的摩擦噪声——带通后的白噪声，其「粗糙度」用一个
-// 快速抖动的低频调制来模拟笔尖颗粒感；两笔之间有极短停顿，收尾略微加重。
+// 两笔利落勾画：短撇 + 转角微停 + 长挑；以带通摩擦噪声为主，避免正弦「电子音」。
 function makePenCheck() {
-  const dur = 0.72
+  const dur = 0.5
   const N = Math.floor(SR * dur)
   const out = new Float32Array(N)
 
-  // 一笔划：从 t0 起、持续 len 秒的摩擦噪声，音量由包络控制，
-  // press 控制下笔轻重（影响亮度与幅度）。
+  // 一笔划纸：带通沙沙声 + 笔尖颗粒调制，attack 极快、release 干脆
   function stroke(t0, len, press) {
     const s0 = Math.floor(t0 * SR)
     const s1 = Math.min(N, Math.floor((t0 + len) * SR))
-    // 带通：两级一阶差分/积分近似，突出中高频「沙沙」
-    let hp = 0
     let lp = 0
+    let hp = 0
     let prev = 0
     for (let i = s0; i < s1; i++) {
-      const u = (i - s0) / (s1 - s0) // 0→1
-      // 起笔快速上扬、收笔平滑落下的钟形包络，收笔端略微拖尾
-      const env = Math.pow(Math.sin(Math.PI * Math.min(1, u * 1.05)), 0.8)
-      // 笔尖颗粒：60~90Hz 的粗糙抖动叠加随机，形成划纸的「颗粒摩擦」
-      const grain = 0.6 + 0.4 * Math.sin(2 * Math.PI * 74 * (i / SR)) * (Math.random() * 0.8 + 0.2)
+      const u = (i - s0) / Math.max(1, s1 - s0)
+      const sec = i / SR
+      // 快起快收，中间饱满——更像真实划纸而非拖泥带水
+      const env = u < 0.06 ? u / 0.06 : u > 0.88 ? (1 - u) / 0.12 : 1
+      const grain = 0.62 + 0.38 * Math.sin(2 * Math.PI * 95 * sec) * (0.35 + 0.65 * Math.random())
       const white = Math.random() * 2 - 1
+      // 高通去直流 + 低通压暗刺耳高频 → 2–5 kHz 沙沙摩擦带
       hp = white - prev
       prev = white
-      lp += 0.22 * (hp - lp) // 一阶低通，柔化高频毛刺
-      out[i] += lp * grain * env * press
+      lp += 0.22 * (hp - lp)
+      const scratch = lp * 2.8 * grain
+      // 极轻纸纤维碎响（随机脉冲，非周期音）
+      const fiber = Math.random() < 0.09 ? (Math.random() * 2 - 1) * 0.35 : 0
+      out[i] += (scratch + fiber) * env * press
     }
   }
 
   // 第一笔：短促下行小撇
-  stroke(0.02, 0.12, 0.55)
-  // 第二笔：主笔上行，更长更重
-  stroke(0.2, 0.34, 1.0)
+  stroke(0.012, 0.085, 0.62)
+  // 转角微停后第二笔：主挑，更快更重
+  stroke(0.118, 0.24, 1.0)
 
-  // 收尾顿笔：主笔末端一个轻微的低频「顿」，让勾有个落点
-  const tapAt = 0.5
-  const tapDec = 0.05
-  const ts = Math.floor(tapAt * SR)
-  for (let i = ts; i < N; i++) {
-    const t = (i - ts) / SR
-    out[i] += 0.28 * Math.exp(-t / tapDec) * Math.sin(2 * Math.PI * 190 * t)
+  // 收笔：摩擦骤停 + 极短纸面回弹（噪声脉冲，非正弦）
+  const liftAt = Math.floor(0.355 * SR)
+  let liftLp = 0
+  for (let i = liftAt; i < Math.min(N, liftAt + Math.floor(0.04 * SR)); i++) {
+    const t = (i - liftAt) / SR
+    const white = Math.random() * 2 - 1
+    liftLp += 0.35 * (white - liftLp)
+    out[i] += 0.42 * liftLp * Math.exp(-t / 0.011)
   }
 
   for (let i = 0; i < N; i++) out[i] = softClip(out[i], 1.05)
   normalize(out, 0.8)
-  fadeEdges(out, 4, 60)
+  fadeEdges(out, 2, 55)
   return out
 }
 
@@ -257,9 +259,51 @@ function makePaperRustle() {
   return out
 }
 
+// ---------- 印章落下 ----------
+// 盖章「咚」的一瞬：短促的低频木质冲击 + 轻微的墨垫压扁噪声，
+// 干脆利落、极快衰减，用于在印章落定的那一刻触发。
+function makeStampImpact() {
+  const dur = 0.45
+  const N = Math.floor(SR * dur)
+  const out = new Float32Array(N)
+
+  // 低频木质「咚」：起始有轻微音高下滑，快速衰减
+  const f0 = 118
+  const dec = 0.09
+  for (let i = 0; i < N; i++) {
+    const t = i / SR
+    const drop = 1 + 0.5 * Math.exp(-t / 0.012)
+    out[i] += 0.95 * Math.exp(-t / dec) * Math.sin(2 * Math.PI * f0 * drop * t)
+  }
+
+  // 接触瞬态：极短的宽带噪声，模拟墨垫/纸面被压扁的「噗」
+  let lp = 0
+  const trDec = 0.012
+  const trEnd = Math.floor(0.05 * SR)
+  for (let i = 0; i < trEnd; i++) {
+    const t = i / SR
+    const white = Math.random() * 2 - 1
+    lp += 0.25 * (white - lp) // 压暗，避免发尖
+    out[i] += 0.5 * lp * Math.exp(-t / trDec)
+  }
+
+  // 一点中频「实心感」，让冲击不空洞
+  const dec2 = 0.05
+  for (let i = 0; i < N; i++) {
+    const t = i / SR
+    out[i] += 0.3 * Math.exp(-t / dec2) * Math.sin(2 * Math.PI * 240 * t)
+  }
+
+  for (let i = 0; i < N; i++) out[i] = softClip(out[i], 1.1)
+  normalize(out, 0.88)
+  fadeEdges(out, 0, 50)
+  return out
+}
+
 mkdirSync(OUT_DIR, { recursive: true })
 writeFileSync(resolve(OUT_DIR, 'anvil-strike.wav'), encodeWav(makeAnvilStrike()))
 writeFileSync(resolve(OUT_DIR, 'forge-ignite.wav'), encodeWav(makeForgeIgnite()))
 writeFileSync(resolve(OUT_DIR, 'pen-check.wav'), encodeWav(makePenCheck()))
 writeFileSync(resolve(OUT_DIR, 'paper-rustle.wav'), encodeWav(makePaperRustle()))
+writeFileSync(resolve(OUT_DIR, 'stamp-impact.wav'), encodeWav(makeStampImpact()))
 console.log('生成完成 →', OUT_DIR)
