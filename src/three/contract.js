@@ -9,11 +9,13 @@ import {
 
 // 「合同签订」确认汰换特效：
 // 一份汰换合同自上方飞入并展开 → 逐条列出选中材料（名称用对应品质色）→
-// 右下角一支黑色签字笔画出一个「勾」→ 合同盖章并向上抽离 → onDone 切结果。
-// createContract(canvas) 返回句柄，play(opts) 播放一次完整序列，回调驱动外部（音效、结果视图）。
+// 在盖章处显示脉冲提示，等待用户点击 → 点击后「已签署」印章砸下（onStamp）→
+// 合同向上抽离 → onDone 交回外部（外部衔接熔炉闭合）。
+// createContract(canvas) 返回句柄，play(opts) 播放一次完整序列，回调驱动外部。
 //
-// 合同纸面用 2D canvas 逐帧绘制后作为纹理贴到三维平面上——这样中文文本与逐项
-// 品质配色都能自由排版，而「打勾」则通过逐帧推进笔迹描边进度重绘纹理来实现。
+// 合同纸面用 2D canvas 逐帧绘制后作为纹理贴到三维平面上——中文文本与逐项
+// 品质配色都能自由排版；盖章交互由内部 Raycaster 命中纸面并换算 UV → 纸面
+// 像素坐标判定，等待盖章期间外层需允许 canvas 接收 pointer 事件。
 
 const FOV = 42
 // 合同纸面像素尺寸（纹理分辨率）与三维平面尺寸（保持同一纵横比 √2 : 1 近似 A4）
@@ -22,6 +24,11 @@ const PAGE_H = 1180
 const PLANE_W = 6.4
 const PLANE_H = (PAGE_H / PAGE_W) * PLANE_W
 const CONTRACT_SIGNER_NAME = 'XXX'
+// 印章中心（纸面像素坐标）与点击判定半径
+const STAMP_CX = PAGE_W - 200
+const STAMP_CY = PAGE_H - 260
+const STAMP_R = 92
+const STAMP_HIT_R = 150
 
 function formatContractDate(date = new Date()) {
   const year = date.getFullYear()
@@ -39,31 +46,18 @@ const smooth = (a, b, t) => {
 }
 const easeOut = (x) => 1 - Math.pow(1 - x, 3)
 const easeIn = (x) => x * x * x
-const easeInOut = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2)
-// 勾的两笔：第一笔快速落、转角极短停、第二笔利落甩出
-const signStrokeEase = (u, cornerRatio, pause = 0.07) => {
-  if (u < cornerRatio) return easeOut(u / cornerRatio) * cornerRatio
-  if (u < cornerRatio + pause) return cornerRatio
-  const v = (u - cornerRatio - pause) / (1 - cornerRatio - pause)
-  return cornerRatio + easeOut(v) * (1 - cornerRatio)
-}
 
 // ---------- 合同纸面绘制 ----------
-// 用一个离屏 canvas 绘制整张合同，signProgress ∈ [0,1] 控制右下角「勾」的描边进度、
-// stampProgress ∈ [0,1] 控制「已签署」印章的浮现。返回 { canvas, redraw }。
+// 用一个离屏 canvas 绘制整张合同：
+// stampProgress ∈ [0,1] 控制「已签署」印章的下压浮现；
+// hintAlpha ∈ [0,1] / hintPulse ∈ [0,1] 控制盖章处的点击提示（脉冲虚线圈）。
+// 返回 { canvas, redraw }。
 function makePaper(items, resultTag) {
   const cv = document.createElement('canvas')
   cv.width = PAGE_W
   cv.height = PAGE_H
   const g = cv.getContext('2d')
   const signedDate = formatContractDate()
-
-  // 勾的两段折线控制点（纸面像素坐标，位于右下签名区）
-  const CHECK = {
-    p0: { x: PAGE_W - 250, y: PAGE_H - 150 },
-    p1: { x: PAGE_W - 205, y: PAGE_H - 105 },
-    p2: { x: PAGE_W - 120, y: PAGE_H - 210 },
-  }
 
   function roundRect(x, y, w, h, r) {
     g.beginPath()
@@ -75,7 +69,7 @@ function makePaper(items, resultTag) {
     g.closePath()
   }
 
-  function redraw(signProgress, stampProgress) {
+  function redraw(stampProgress, hintAlpha, hintPulse) {
     // 纸张底色：米黄羊皮纸质感 + 轻微渐变
     const bg = g.createLinearGradient(0, 0, 0, PAGE_H)
     bg.addColorStop(0, '#f7f1e0')
@@ -187,9 +181,9 @@ function makePaper(items, resultTag) {
     g.font = '400 18px "PingFang SC","Microsoft YaHei",sans-serif'
     g.fillText(`日期：${signedDate}`, 90, signY + 42)
 
-    // 右下角「勾」——黑色签字笔迹，随 signProgress 逐段显现
-    if (signProgress > 0) {
-      drawCheck(signProgress)
+    // 盖章点击提示（等待盖章期间脉冲显示，开始盖章后淡出）
+    if (hintAlpha > 0.01) {
+      drawHint(hintAlpha, hintPulse)
     }
 
     // 「已签署」印章
@@ -198,56 +192,53 @@ function makePaper(items, resultTag) {
     }
   }
 
-  // 沿 p0→p1→p2 折线按进度绘制勾，带轻微墨迹起伏
-  function drawCheck(prog) {
-    const { p0, p1, p2 } = CHECK
-    const len1 = Math.hypot(p1.x - p0.x, p1.y - p0.y)
-    const len2 = Math.hypot(p2.x - p1.x, p2.y - p1.y)
-    const total = len1 + len2
-    const drawn = prog * total
-
-    g.strokeStyle = '#15110a'
-    g.lineJoin = 'round'
-    g.lineCap = 'round'
-    g.beginPath()
-    g.moveTo(p0.x, p0.y)
-    if (drawn <= len1) {
-      const t = drawn / len1
-      g.lineWidth = lerp(10, 13, t)
-      g.lineTo(lerp(p0.x, p1.x, t), lerp(p0.y, p1.y, t))
-    } else {
-      g.lineWidth = 13
-      g.lineTo(p1.x, p1.y)
-      const t = clamp01((drawn - len1) / len2)
-      // 主笔收尾略微提笔变细
-      g.lineTo(lerp(p1.x, p2.x, t), lerp(p1.y, p2.y, t))
-    }
-    g.stroke()
-    // 二次描边模拟墨迹渗透
-    g.globalAlpha = 0.35
+  // 盖章提示：印章位置的脉冲虚线圈 + 「点击盖章」文字
+  function drawHint(alpha, pulse) {
+    const breath = 0.75 + 0.25 * Math.sin(pulse * Math.PI * 2)
+    g.save()
+    g.globalAlpha = alpha * breath
+    g.translate(STAMP_CX, STAMP_CY)
+    // 外圈旋转虚线
+    g.strokeStyle = 'rgba(190,40,32,0.9)'
     g.lineWidth = 4
+    g.setLineDash([16, 12])
+    g.lineDashOffset = -pulse * 56
+    g.beginPath()
+    g.arc(0, 0, STAMP_R + 18 + (1 - breath) * 14, 0, Math.PI * 2)
     g.stroke()
-    g.globalAlpha = 1
+    g.setLineDash([])
+    // 内圈淡红底
+    g.fillStyle = 'rgba(190,40,32,0.08)'
+    g.beginPath()
+    g.arc(0, 0, STAMP_R + 4, 0, Math.PI * 2)
+    g.fill()
+    // 文案
+    g.fillStyle = 'rgba(190,40,32,0.95)'
+    g.textAlign = 'center'
+    g.textBaseline = 'middle'
+    g.font = '900 34px "PingFang SC","Microsoft YaHei",sans-serif'
+    g.fillText('点击盖章', 0, -12)
+    g.font = '700 16px "PingFang SC",sans-serif'
+    g.fillText('CLICK TO STAMP', 0, 24)
+    g.textBaseline = 'alphabetic'
+    g.restore()
   }
 
-  // 红色「已签署」印章：圆环 + 文字，带旋转与缩放浮现
+  // 红色「已签署」印章：圆环 + 文字，带旋转与缩放下压
   function drawStamp(prog) {
-    const cx = PAGE_W - 200
-    const cy = PAGE_H - 260
-    const R = 92
     g.save()
     g.globalAlpha = clamp01(prog)
-    g.translate(cx, cy)
+    g.translate(STAMP_CX, STAMP_CY)
     g.rotate(-0.22)
     g.scale(lerp(1.35, 1, easeOut(prog)), lerp(1.35, 1, easeOut(prog)))
     g.strokeStyle = 'rgba(190,40,32,0.9)'
     g.lineWidth = 6
     g.beginPath()
-    g.arc(0, 0, R, 0, Math.PI * 2)
+    g.arc(0, 0, STAMP_R, 0, Math.PI * 2)
     g.stroke()
     g.lineWidth = 3
     g.beginPath()
-    g.arc(0, 0, R - 14, 0, Math.PI * 2)
+    g.arc(0, 0, STAMP_R - 14, 0, Math.PI * 2)
     g.stroke()
     g.fillStyle = 'rgba(190,40,32,0.92)'
     g.textAlign = 'center'
@@ -260,7 +251,7 @@ function makePaper(items, resultTag) {
     g.restore()
   }
 
-  return { canvas: cv, redraw, CHECK }
+  return { canvas: cv, redraw }
 }
 
 export function createContract(canvas) {
@@ -287,7 +278,7 @@ export function createContract(canvas) {
 
   const composer = new EffectComposer(renderer)
   composer.addPass(new RenderPass(scene, camera))
-  // 高 threshold：只让真正的高光（辉光/印章边）泛光，避免整张亮纸被冲淡文字对比
+  // 高 threshold：只让真正的高光泛光，避免整张亮纸被冲淡文字对比
   const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.26, 0.5, 0.9)
   composer.addPass(bloom)
   composer.addPass(new OutputPass())
@@ -317,7 +308,7 @@ export function createContract(canvas) {
   const rim = new THREE.DirectionalLight(0x7088ff, 0.5)
   rim.position.set(6, 2, -4)
   scene.add(rim)
-  // 暖色台灯感聚光，让签字时纸面右下更亮
+  // 暖色台灯感聚光：等待盖章时照亮纸面右下的印章区
   const deskLight = new THREE.SpotLight(0xffe6b0, 0, 30, Math.PI / 5, 0.5, 1.5)
   deskLight.position.set(3.5, 4, 7)
   scene.add(deskLight)
@@ -329,7 +320,7 @@ export function createContract(canvas) {
   // ---------- 合同纸面 ----------
   const paperGroup = new THREE.Group()
   scene.add(paperGroup)
-  let paper = null // { canvas, redraw, CHECK }
+  let paper = null // { canvas, redraw }
   let paperTex = null
   const paperMat = new THREE.MeshStandardMaterial({
     color: 0xffffff,
@@ -353,7 +344,7 @@ export function createContract(canvas) {
   const paperMesh = new THREE.Mesh(paperGeo, paperMat)
   paperGroup.add(paperMesh)
 
-  // 纸面背光辉光（签字定格时轻微增强）
+  // 纸面背光辉光（盖章瞬间轻微增强）
   const glowMat = track(
     new THREE.MeshBasicMaterial({ color: 0xffcf28, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }),
   )
@@ -361,74 +352,9 @@ export function createContract(canvas) {
   glow.position.z = -0.15
   paperGroup.add(glow)
 
-  // ---------- 签字笔 ----------
-  const pen = new THREE.Group()
-  const penMats = []
-  const penMatOpts = { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }
-  const barrelMat = new THREE.MeshStandardMaterial({ color: 0x0c0c10, roughness: 0.35, metalness: 0.6, ...penMatOpts })
-  const gripMat = new THREE.MeshStandardMaterial({ color: 0x1a1a22, roughness: 0.7, metalness: 0.2, ...penMatOpts })
-  const tipMat = new THREE.MeshStandardMaterial({ color: 0xc0c0c8, roughness: 0.25, metalness: 0.95, ...penMatOpts })
-  const capMat = new THREE.MeshStandardMaterial({ color: 0xd4af37, roughness: 0.3, metalness: 0.9, ...penMatOpts })
-  penMats.push(barrelMat, gripMat, tipMat, capMat)
-  penMats.forEach(track)
-  // 组原点 = 落笔点（笔尖最底端），所有几何都在 y≥0，避免旋转时插入纸面。
-  // 两个锥体默认尖端朝 +y，需绕 X 翻转 180° 让尖端朝下（-y，对着纸面）。
-  const tip = new THREE.Mesh(track(new THREE.ConeGeometry(0.04, 0.16, 16)), tipMat)
-  tip.rotation.x = Math.PI // 尖端朝下
-  tip.position.y = 0.08     // 尖端落在 y=0（纸面），底在 0.16
-  pen.add(tip)
-  const cone = new THREE.Mesh(track(new THREE.ConeGeometry(0.16, 0.5, 24)), gripMat)
-  cone.rotation.x = Math.PI // 由粗到细向下收，衔接笔尖
-  cone.position.y = 0.41    // 细端 0.16，粗端 0.66
-  pen.add(cone)
-  const grip = new THREE.Mesh(track(new THREE.CylinderGeometry(0.17, 0.15, 0.5, 24)), gripMat)
-  grip.position.y = 0.79
-  pen.add(grip)
-  const barrel = new THREE.Mesh(track(new THREE.CylinderGeometry(0.14, 0.17, 2.2, 24)), barrelMat)
-  barrel.position.y = 1.74
-  pen.add(barrel)
-  const clip = new THREE.Mesh(track(new THREE.BoxGeometry(0.05, 0.6, 0.12)), capMat)
-  clip.position.set(0.17, 2.34, 0)
-  pen.add(clip)
-  const cap = new THREE.Mesh(track(new THREE.CylinderGeometry(0.175, 0.175, 0.3, 24)), capMat)
-  cap.position.y = 2.89
-  pen.add(cap)
-  pen.visible = false
-  pen.renderOrder = 12
-  pen.traverse((o) => { if (o.isMesh) o.renderOrder = 12 })
-  paperGroup.add(pen)
-
-  // 签字阶段不做笔尖粒子，保持黑色勾线干净清晰。
-  function updateInk() {}
-
-  // 把纸面像素坐标（PAGE_W×PAGE_H，原点左上）映射到 paperGroup 局部三维坐标
-  function pageToLocal(px, py) {
-    return {
-      x: (px / PAGE_W - 0.5) * PLANE_W,
-      y: (0.5 - py / PAGE_H) * PLANE_H,
-    }
-  }
-
-  // 勾折线两段长度比，用于运笔进度与转角停顿
-  function checkMetrics() {
-    const { p0, p1, p2 } = paper.CHECK
-    const s = pageToLocal(p0.x, p0.y)
-    const m = pageToLocal(p1.x, p1.y)
-    const e = pageToLocal(p2.x, p2.y)
-    const len1 = Math.hypot(m.x - s.x, m.y - s.y)
-    const len2 = Math.hypot(e.x - m.x, e.y - m.y)
-    const total = len1 + len2
-    return { start: s, mid: m, end: e, len1, len2, total, cornerRatio: len1 / total }
-  }
-
-  // 纸面在局部 (x,y) 处的表面高度 z——必须与 paperGeo 顶点起伏公式一致，
-  // 用于让笔尖始终贴着纸面而不穿透。签字时纸处于静止态（无缩放/旋转），
-  // 局部 z 即可近似作为世界 z 使用。
-  function paperSurfaceZ(x, y) {
-    return Math.sin((x / PLANE_W) * Math.PI) * 0.12 - Math.abs(y / PLANE_H) * 0.08
-  }
-
   // ---------- 状态 & 时间线 ----------
+  // 时间线里 stampAt 在点击前为 Infinity：飞入展示后停在「等待盖章」，
+  // confirmStamp()（点击命中印章区）把 stampAt 设为当前时刻，序列继续。
   let raf = 0
   let running = false
   const clock = new THREE.Clock()
@@ -436,31 +362,67 @@ export function createContract(canvas) {
   let cb = {}
   let T = null
   const fired = {}
-  let signProg = 0
   let stampProg = 0
+  let hintAlpha = 0
   let lastTexUpdate = -1
 
   function buildTimeline() {
-    const flyIn = 0        // 合同飞入开始
-    const flyEnd = 0.9     // 飞入定格
-    const readEnd = 1.7    // 停留展示材料清单
-    const penIn = readEnd  // 笔飞入
-    const penDown = penIn + 0.38 // 笔尖落到起笔点
-    const signStart = penDown
-    const signEnd = signStart + 0.48 // 画勾结束（利落两笔）
-    const stampStart = signEnd + 0.12 // 印章开始下压/浮现
-    const stampEnd = stampStart + 0.4  // 印章完全落定
-    // 印章「盖下去」的接触瞬间——用于触发盖章音效与边缘闪光。
-    // 较落定点(stampEnd)提前，让音效抢在动作前一点，听感更跟手。
-    const stampHit = stampEnd - 0.36
-    const penOut = stampEnd + 0.15
-    const flyOutStart = penOut + 0.35 // 合同抽离
-    const flyOutEnd = flyOutStart + 0.8
-    const doneTime = flyOutEnd + 0.15
-    return { flyIn, flyEnd, readEnd, penIn, penDown, signStart, signEnd, stampStart, stampEnd, stampHit, penOut, flyOutStart, flyOutEnd, doneTime }
+    return {
+      flyIn: 0,        // 合同飞入开始
+      flyEnd: 0.9,     // 飞入定格
+      readEnd: 1.6,    // 材料清单展示完毕，提示出现、开始等待点击
+      stampAt: Infinity,     // 点击时刻（点击后写入）
+      stampEnd: Infinity,    // 印章落定
+      stampHit: Infinity,    // 印章接触瞬间（音效/闪光）
+      flyOutStart: Infinity, // 合同抽离
+      flyOutEnd: Infinity,
+      doneTime: Infinity,
+    }
   }
 
-  // 合同飞入 → 定格 → 抽离 的位姿
+  const waitingStamp = () => running && T && !isFinite(T.stampAt) && t >= T.readEnd
+
+  function confirmStamp() {
+    T.stampAt = t + 0.04
+    T.stampEnd = T.stampAt + 0.4
+    // 音效抢在落定前一点触发，听感更跟手
+    T.stampHit = T.stampEnd - 0.36
+    T.flyOutStart = T.stampEnd + 0.55
+    T.flyOutEnd = T.flyOutStart + 0.8
+    T.doneTime = T.flyOutEnd + 0.15
+    canvas.style.cursor = 'default'
+  }
+
+  // ---------- 盖章点击交互 ----------
+  const raycaster = new THREE.Raycaster()
+  const pointer = new THREE.Vector2()
+  function pickStamp(e) {
+    const rect = canvas.getBoundingClientRect()
+    pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1
+    pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1
+    raycaster.setFromCamera(pointer, camera)
+    const hit = raycaster.intersectObject(paperMesh)[0]
+    if (!hit || !hit.uv) return false
+    const px = hit.uv.x * PAGE_W
+    const py = (1 - hit.uv.y) * PAGE_H
+    return Math.hypot(px - STAMP_CX, py - STAMP_CY) <= STAMP_HIT_R
+  }
+  function onPointerDown(e) {
+    if (!waitingStamp()) return
+    if (!pickStamp(e)) return
+    confirmStamp()
+  }
+  function onPointerMove(e) {
+    if (!waitingStamp()) {
+      canvas.style.cursor = 'default'
+      return
+    }
+    canvas.style.cursor = pickStamp(e) ? 'pointer' : 'default'
+  }
+  canvas.addEventListener('pointerdown', onPointerDown)
+  canvas.addEventListener('pointermove', onPointerMove)
+
+  // 合同飞入 → 定格（等待盖章）→ 抽离 的位姿
   function updatePaper() {
     let px = 0, py = 0, pz = 0, rotX = 0, rotZ = 0, scale = 1, op = 1
     if (t < T.flyEnd) {
@@ -492,110 +454,52 @@ export function createContract(canvas) {
     paperGroup.scale.setScalar(scale)
     paperMat.opacity = op
     paperMat.transparent = op < 1
-    // 签字定格时纸面辉光渐起，抽离时退去。
-    // 幅度压低：辉光过强 + bloom 会把深色细笔冲淡（看起来发虚/透明）。
-    const glowOn = smooth(T.signStart, T.signEnd, t) * (t < T.flyOutStart ? 1 : clamp01(1 - smooth(T.flyOutStart, T.flyOutEnd, t)))
+    // 盖章落定时纸面辉光轻微亮起，抽离时退去
+    const glowOn = isFinite(T.stampAt)
+      ? smooth(T.stampAt, T.stampEnd, t) * (t < T.flyOutStart ? 1 : clamp01(1 - smooth(T.flyOutStart, T.flyOutEnd, t)))
+      : 0
     glowMat.opacity = 0.12 * glowOn
   }
 
-  // 签字笔飞入 → 沿勾的折线运笔 → 抬笔飞出
-  function updatePen() {
-    if (t < T.penIn || t > T.penOut) {
-      pen.visible = false
-      return
-    }
-    pen.visible = true
-    const { start, mid, end, len1, total, cornerRatio } = checkMetrics()
-
-    // 笔尖与纸面起伏之间的安全间隙（已把笔尖几何抬到 y≥0，这里再留余量防 z-fighting）
-    const TIP_GAP = 0.075
-    // 固定的握笔姿态：笔尖朝下点在纸面，笔杆斜向右上方（右手握笔），
-    // 全程保持不变——之前让笔杆跟随运笔方向旋转，导致落笔时整支笔被翻转。
-    const PEN_TILT_X = 0.58 // 笔身抬到纸面前方，避免被合同纸遮挡
-    const PEN_LEAN_Z = -0.5 // 笔杆偏向右上
-    let tipX, tipY, tipZ, op = 1
-    if (t < T.penDown) {
-      // 笔从右上方俯冲到起笔点，笔尖逐渐贴近纸面
-      const p = easeOut(smooth(T.penIn, T.penDown, t))
-      tipX = lerp(start.x + 3, start.x, p)
-      tipY = lerp(start.y + 4, start.y, p)
-      const landZ = paperSurfaceZ(start.x, start.y) + TIP_GAP
-      tipZ = lerp(3, landZ, p)
-      op = clamp01(p * 2)
-    } else if (t < T.signEnd) {
-      const u = clamp01((t - T.signStart) / (T.signEnd - T.signStart))
-      const prog = signStrokeEase(u, cornerRatio, 0.06)
-      const drawn = prog * total
-      let cx, cy
-      if (drawn <= len1) {
-        const s = drawn / len1
-        cx = lerp(start.x, mid.x, s)
-        cy = lerp(start.y, mid.y, s)
-      } else {
-        const s = clamp01((drawn - len1) / (total - len1))
-        cx = lerp(mid.x, end.x, s)
-        cy = lerp(mid.y, end.y, s)
-      }
-      tipX = cx
-      tipY = cy
-      tipZ = paperSurfaceZ(cx, cy) + TIP_GAP
-    } else {
-      // 抬笔飞出（右上）
-      const p = easeIn(smooth(T.signEnd, T.penOut, t))
-      tipX = lerp(end.x, end.x + 3.5, p)
-      tipY = lerp(end.y, end.y + 4.5, p)
-      const liftZ = paperSurfaceZ(end.x, end.y) + TIP_GAP
-      tipZ = lerp(liftZ, 4, p)
-      op = 1 - p
-    }
-    pen.position.set(tipX, tipY, tipZ)
-    // 运笔时叠加极轻微的抖动，其余时刻保持固定握笔姿态
-    const wob = (t >= T.signStart && t < T.signEnd) ? Math.sin(t * 30) * 0.025 : 0
-    pen.rotation.set(PEN_TILT_X, 0, PEN_LEAN_Z + wob)
-    penMats.forEach((m) => {
-      m.transparent = op < 1
-      m.opacity = op
-    })
-  }
-
-  function stepUpdate(dt) {
+  function stepUpdate() {
     // 阶段回调
     if (!fired.pIn && t >= T.flyIn) { fired.pIn = true; cb.onPhase && cb.onPhase('呈递合同'); cb.onPaper && cb.onPaper() }
     if (!fired.pRead && t >= T.flyEnd) { fired.pRead = true; cb.onPhase && cb.onPhase('核对材料') }
-    if (!fired.pSign && t >= T.signStart) { fired.pSign = true; cb.onPhase && cb.onPhase('签字'); cb.onSign && cb.onSign() }
-    // 阶段标签在印章开始浮现时切换；音效/闪光留到「盖下去」的接触瞬间
-    if (!fired.pStamp && t >= T.stampStart) { fired.pStamp = true; cb.onPhase && cb.onPhase('盖章') }
+    if (!fired.pWait && t >= T.readEnd) { fired.pWait = true; cb.onPhase && cb.onPhase('点击合同右下角盖章'); cb.onAwaitStamp && cb.onAwaitStamp() }
+    if (!fired.pStamp && t >= T.stampAt) { fired.pStamp = true; cb.onPhase && cb.onPhase('盖章') }
     if (!fired.stampHit && t >= T.stampHit) { fired.stampHit = true; cb.onStamp && cb.onStamp() }
     if (!fired.pOut && t >= T.flyOutStart) { fired.pOut = true; cb.onPhase && cb.onPhase('生效'); cb.onPaper && cb.onPaper() }
     if (!fired.done && t >= T.doneTime) { fired.done = true; running = false; cb.onDone && cb.onDone() }
 
-    // 描边 / 印章进度
-    const signU = clamp01((t - T.signStart) / (T.signEnd - T.signStart))
-    const newSign = t < T.signStart ? 0 : t >= T.signEnd ? 1 : signStrokeEase(signU, checkMetrics().cornerRatio, 0.06)
-    const newStamp = clamp01(smooth(T.stampStart, T.stampEnd, t))
-    signProg = newSign
-    stampProg = newStamp
+    // 印章进度 / 提示透明度
+    stampProg = isFinite(T.stampAt) ? clamp01(smooth(T.stampAt, T.stampEnd, t)) : 0
+    const hintIn = smooth(T.readEnd, T.readEnd + 0.4, t)
+    const hintOut = isFinite(T.stampAt) ? 1 - clamp01((t - T.stampAt) / 0.18) : 1
+    hintAlpha = hintIn * hintOut
+    const hintPulse = (t % 1.4) / 1.4
 
-    // 仅在进度变化时重绘纹理（避免每帧无谓重绘）
-    const key = Math.round(signProg * 120) + Math.round(stampProg * 60) * 1000
+    // 仅在画面内容变化时重绘纹理（印章/提示均量化，避免每帧无谓重绘）
+    const key =
+      Math.round(stampProg * 60) * 100000 +
+      Math.round(hintAlpha * 24) * 1000 +
+      (hintAlpha > 0.01 ? Math.round(hintPulse * 48) : 0)
     if (key !== lastTexUpdate) {
       lastTexUpdate = key
-      paper.redraw(signProg, stampProg)
+      paper.redraw(stampProg, hintAlpha, hintPulse)
       paperTex.needsUpdate = true
     }
 
-    // 台灯在签字阶段点亮
-    deskLight.intensity = 1.4 * smooth(T.penIn, T.signStart, t) * (t < T.penOut ? 1 : clamp01(1 - smooth(T.penOut, T.flyOutEnd, t)))
+    // 台灯在等待盖章时点亮，照向印章区
+    const lightOff = isFinite(T.flyOutStart) ? clamp01(1 - smooth(T.flyOutStart, T.flyOutEnd, t)) : 1
+    deskLight.intensity = 1.4 * smooth(T.flyEnd, T.readEnd, t) * lightOff
 
     updatePaper()
-    updatePen()
-    updateInk(dt)
 
-    // bloom 在签字定格时略增（基准低，避免冲淡纸面文字）
+    // bloom 在盖章定格时略增（基准低，避免冲淡纸面文字）
     bloom.strength = 0.24 + 0.12 * glowMat.opacity / 0.28
 
-    // 相机极缓慢推进 + 签字时轻微俯视
-    const dolly = smooth(0, T.doneTime, t)
+    // 相机极缓慢推进 + 轻微呼吸
+    const dolly = smooth(0, 6, Math.min(t, 6))
     camera.position.set(camBase.x, camBase.y + Math.sin(t * 0.5) * 0.05, lerp(camBase.z, 12.4, dolly))
     camera.lookAt(0, -0.1, 0)
   }
@@ -605,7 +509,7 @@ export function createContract(canvas) {
     const scale = ts == null ? 1 : ts
     const dt = Math.min(clock.getDelta(), 0.05) * scale
     t += dt
-    stepUpdate(dt)
+    stepUpdate()
     composer.render()
     if (running) raf = requestAnimationFrame(tick)
   }
@@ -627,12 +531,12 @@ export function createContract(canvas) {
   function resetState() {
     t = 0
     for (const k in fired) delete fired[k]
-    signProg = 0
     stampProg = 0
+    hintAlpha = 0
     lastTexUpdate = -1
-    pen.visible = false
     deskLight.intensity = 0
     glowMat.opacity = 0
+    canvas.style.cursor = 'default'
   }
 
   function play(opts = {}) {
@@ -651,7 +555,7 @@ export function createContract(canvas) {
 
     T = buildTimeline()
     resetState()
-    paper.redraw(0, 0)
+    paper.redraw(0, 0, 0)
     paperTex.needsUpdate = true
 
     if (!running) {
@@ -664,13 +568,15 @@ export function createContract(canvas) {
   function stop() {
     running = false
     cancelAnimationFrame(raf)
+    canvas.style.cursor = 'default'
   }
 
   function dispose() {
     stop()
     ro.disconnect()
+    canvas.removeEventListener('pointerdown', onPointerDown)
+    canvas.removeEventListener('pointermove', onPointerMove)
     if (paperTex) paperTex.dispose()
-    penMats.forEach((m) => m.dispose())
     disposables.forEach((o) => o.dispose && o.dispose())
     envRT.dispose()
     pmrem.dispose()
