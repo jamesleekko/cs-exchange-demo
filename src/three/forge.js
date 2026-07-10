@@ -236,6 +236,11 @@ export function createForge(canvas) {
 
   // ---------- 铁锤 ----------
   const hammer = new THREE.Group()
+  // 锤体装配在内层 group 中并整体旋转 -90°：击打面朝下、锤柄横向伸出，
+  // 落锤时锤柄保持在炉口上方，不会插入炉膛
+  const hammerBody = new THREE.Group()
+  hammerBody.rotation.z = -Math.PI / 2
+  hammer.add(hammerBody)
   const hammerMats = []
   const headMat = new THREE.MeshStandardMaterial({ color: 0x454b57, roughness: 0.42, metalness: 0.82, transparent: true, opacity: 1 })
   const woodMat = new THREE.MeshStandardMaterial({ color: 0x7a4c2b, roughness: 0.8, metalness: 0.1, transparent: true, opacity: 1 })
@@ -243,15 +248,15 @@ export function createForge(canvas) {
   track(headMat)
   track(woodMat)
   const head = new THREE.Mesh(track(new THREE.BoxGeometry(1.15, 0.72, 0.72)), headMat)
-  hammer.add(head)
+  hammerBody.add(head)
   const face1 = new THREE.Mesh(track(new THREE.CylinderGeometry(0.36, 0.4, 0.16, 20)), ironMat)
   face1.rotation.z = Math.PI / 2
   face1.position.x = 0.62
-  hammer.add(face1)
+  hammerBody.add(face1)
   const handle = new THREE.Mesh(track(new THREE.CylinderGeometry(0.1, 0.13, 2.7, 16)), woodMat)
   handle.position.set(-0.2, -1.45, 0)
   handle.rotation.z = 0.13
-  hammer.add(handle)
+  hammerBody.add(handle)
   hammer.position.set(0, 6, 0)
   hammer.visible = false
   scene.add(hammer)
@@ -616,32 +621,33 @@ export function createForge(canvas) {
     }
     hammer.visible = true
     let y, rot, op
+    // rot > 0 时锤柄一侧(-X)下沉、锤头上扬;落锤前锤头略高于锤柄,砸下时甩过水平线,更有力道
     if (t < T.raiseEnd) {
       const p = easeOut(smooth(T.raiseStart, T.raiseEnd, t))
       y = lerp(6.2, 3.35, p)
-      rot = lerp(-0.7, -0.42, p)
+      rot = lerp(0.6, 0.32, p)
       op = clamp01((t - T.raiseStart) / 0.18)
     } else if (t < T.strikeTime) {
       const p = easeIn(smooth(T.raiseEnd, T.strikeTime, t))
-      y = lerp(3.35, 1.72, p)
-      rot = lerp(-0.42, 0.14, p)
+      y = lerp(3.35, 2.06, p)
+      rot = lerp(0.32, -0.05, p)
       op = 1
     } else if (t < T.reboundEnd) {
       const p = easeOut(smooth(T.strikeTime, T.reboundEnd, t))
-      y = lerp(1.72, 2.7, p)
-      rot = lerp(0.14, -0.12, p)
+      y = lerp(2.06, 3.0, p)
+      rot = lerp(-0.05, 0.15, p)
       op = 1
     } else {
       const p = smooth(T.reboundEnd, T.hammerOut, t)
-      y = lerp(2.7, 6.2, p)
-      rot = -0.12
+      y = lerp(3.0, 6.2, p)
+      rot = 0.15
       op = 1 - p
     }
     hammer.position.set(0.15, y, 0.35)
     hammer.rotation.z = rot
     hammerMats.forEach((m) => (m.opacity = op))
     // 锤头被炉火染色
-    const glow = clamp01((3.4 - y) / 2) * (0.4 + computeFire() * 0.4)
+    const glow = clamp01((3.75 - y) / 2) * (0.4 + computeFire() * 0.4)
     headMat.emissive = headMat.emissive || new THREE.Color()
     headMat.emissive.setRGB(glow * 1.0, glow * 0.4, glow * 0.1)
     headMat.emissiveIntensity = glow * 2
