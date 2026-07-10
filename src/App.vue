@@ -18,6 +18,7 @@ import {
 
 import { createForge } from './three/forge.js';
 import { createContract } from './three/contract.js';
+import { createCase } from './three/case.js';
 import { createStarField } from './three/starfield.js';
 
 // CS2 品质档位（配色见设计图）与最新汰换规则（2025.10 起）：
@@ -303,6 +304,14 @@ const contractPhase = ref('')
 let penAudio = null
 let paperAudio = null
 let stampAudio = null
+
+// 「武器箱开启」three.js 特效（合同签订后衔接：点击箱子开箱 → 品质色光芒 → 结果）
+const caseRef = ref(null)
+let weaponCase = null
+const showCase = ref(false)
+const casePhase = ref('')
+let caseLandAudio = null
+let caseOpenAudio = null
 
 function playSound(el) {
   if (!el) return
@@ -606,6 +615,32 @@ async function startContract() {
     onDone: () => {
       contractPhase.value = ''
       showContract.value = false
+      startCase()
+    },
+  })
+}
+
+// 合同签订完成后：武器箱落下 → 点击开箱 → 品质色光芒涌出 → 弹出结果
+async function startCase() {
+  showCase.value = true
+  casePhase.value = ''
+  await nextTick()
+  if (!weaponCase) weaponCase = createCase(caseRef.value)
+  weaponCase.resize()
+  weaponCase.play({
+    color: cfg.value.color,
+    onLand: () => playSound(caseLandAudio),
+    onPhase: (txt) => (casePhase.value = txt),
+    onOpen: () => playSound(caseOpenAudio),
+    onGlow: () => {
+      edgeColor.value = cfg.value.edge
+      edgeOn.value = true
+      setTimeout(() => (edgeOn.value = false), 1800)
+    },
+    onReveal: () => {},
+    onDone: () => {
+      casePhase.value = ''
+      showCase.value = false
       showResultView()
     },
   })
@@ -621,6 +656,9 @@ function resetAll() {
   showContract.value = false
   contractPhase.value = ''
   contract?.stop()
+  showCase.value = false
+  casePhase.value = ''
+  weaponCase?.stop()
   edgeOn.value = false
   running.value = false
   selected.value = []
@@ -655,6 +693,12 @@ onMounted(() => {
   stampAudio = new Audio('/sfx/stamp.wav')
   stampAudio.volume = 0.85
   stampAudio.preload = 'auto'
+  caseLandAudio = new Audio('/sfx/case-land.wav')
+  caseLandAudio.volume = 0.8
+  caseLandAudio.preload = 'auto'
+  caseOpenAudio = new Audio('/sfx/case-open.wav')
+  caseOpenAudio.volume = 0.85
+  caseOpenAudio.preload = 'auto'
 })
 
 onBeforeUnmount(() => {
@@ -662,6 +706,7 @@ onBeforeUnmount(() => {
   starField?.dispose()
   forge?.dispose()
   contract?.dispose()
+  weaponCase?.dispose()
 })
 </script>
 
@@ -844,6 +889,15 @@ onBeforeUnmount(() => {
             {{ contractPhase }}
           </div>
 
+          <canvas
+            class="forge-layer case-layer"
+            :class="{ show: showCase }"
+            ref="caseRef"
+          ></canvas>
+          <div class="forge-phase case-phase" :class="{ show: showCase && !!casePhase }">
+            {{ casePhase }}
+          </div>
+
           <div class="flash" :class="{ boom: flashBoom }"></div>
           <div
             class="edge"
@@ -982,6 +1036,30 @@ onBeforeUnmount(() => {
   background: rgba(20, 16, 8, 0.6);
   color: #ffe9b0;
   text-shadow: 0 0 16px rgba(212, 175, 55, 0.6);
+}
+/* 「武器箱开启」需要接收点击（Raycaster 命中箱体才开箱） */
+.forge-layer.case-layer.show {
+  pointer-events: auto;
+}
+.forge-phase.case-phase {
+  border-color: rgba(212, 175, 55, 0.5);
+  background: rgba(14, 12, 20, 0.62);
+  color: #ffe9b0;
+  text-shadow: 0 0 16px rgba(212, 175, 55, 0.6);
+  animation: casePhasePulse 1.6s ease-in-out infinite;
+}
+@keyframes casePhasePulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+/* 未显示时不参与动画，避免叠加 transition 的 opacity */
+.forge-phase.case-phase:not(.show) {
+  animation: none;
 }
 
 /* ===== 汰换构建区：左右两栏 ===== */
