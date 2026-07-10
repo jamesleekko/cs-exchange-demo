@@ -843,9 +843,11 @@ export function createForge(canvas) {
     T = buildTimeline(count)
     for (let i = 0; i < count; i++) {
       const col = new THREE.Color(colors[i % colors.length])
-      const mat = new THREE.MeshStandardMaterial({ color: col, emissive: col.clone().multiplyScalar(0.22), roughness: 0.4, metalness: 0.6 })
+      // 自发光向白色靠拢并固定亮度：深色品质（隐秘/保密）也和普通级一样有浅色泛光
+      const emis = col.clone().lerp(new THREE.Color(0xffffff), 0.6)
+      const mat = new THREE.MeshStandardMaterial({ color: col, emissive: emis, emissiveIntensity: 0.32, roughness: 0.4, metalness: 0.6 })
       itemMats.push(mat)
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.12), mat)
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.52, 0.15), mat)
       const a = i * 2.399
       const side = i % 2 === 0 ? 1 : -1
       const start = { x: side * (2.4 + (i % 3) * 0.5), y: 5 + Math.random() * 0.6, z: -1 + Math.cos(a) * 1.6 }

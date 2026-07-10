@@ -786,7 +786,7 @@ onBeforeUnmount(() => {
               <div class="inv-actions">
                 <n-button block secondary @click="resetSelected">重置</n-button>
                 <n-button block type="primary" @click="autoFill">
-                  一键添加
+                  一键添加{{ activeRarity ? `（${RARITIES[activeRarity].name}）` : '' }}
                 </n-button>
               </div>
             </section>
