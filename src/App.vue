@@ -13,13 +13,10 @@ import {
   NButton,
   NCheckbox,
   NConfigProvider,
-  NSelect,
 } from 'naive-ui';
 
-import { createForge } from './three/forge.js';
 import { createContract } from './three/contract.js';
-import { createCase } from './three/case.js';
-import { createStarField } from './three/starfield.js';
+import { createFurnace } from './three/furnace.js';
 
 // CS2 品质档位（配色见设计图）与最新汰换规则（2025.10 起）：
 // 普通级~保密级：10 件同品质 → 上一档；隐秘级：5 件 → 非凡级(金,刀/手套)；
@@ -273,45 +270,45 @@ const flashBoom = ref(false)
 const edgeOn = ref(false)
 const edgeColor = ref('#ffcf28')
 const stageShake = ref(false)
+const pageImpact = ref(false)
+const furnaceRumbling = ref(false)
+const pageImpactDuration = ref(480)
+let pageImpactTimer = null
+let pageImpactFrame = 0
 
 const toastMsg = ref('')
 const toastShow = ref(false)
 let toastTimer = null
 
 const stageRef = ref(null)
-const bgRef = ref(null)
-let starField = null
 
-// 汰换特效动效切换：classic=经典合成（原效果）/ forge=熔炉锻造（three.js）/ contract=合同签订（three.js）
-const animMode = ref('forge')
-const animOptions = [
-  { label: '熔炉锻造', value: 'forge' },
-  { label: '合同签订', value: 'contract' },
-  { label: '经典合成', value: 'classic' },
-]
-const forgeRef = ref(null)
-let forge = null
-const showForge = ref(false)
-const forgePhase = ref('')
-let anvilAudio = null
-let igniteAudio = null
+// 新的统一流程：合同签订 → 熔炉开合
 
 // 「合同签订」three.js 特效
 const contractRef = ref(null)
 let contract = null
 const showContract = ref(false)
 const contractPhase = ref('')
-let penAudio = null
+const showStampHint = ref(false) // 「点击此处盖章」提示
+const stampHintStyle = ref({})
 let paperAudio = null
 let stampAudio = null
 
-// 「武器箱开启」three.js 特效（合同签订后衔接：点击箱子开箱 → 品质色光芒 → 结果）
-const caseRef = ref(null)
-let weaponCase = null
-const showCase = ref(false)
-const casePhase = ref('')
-let caseLandAudio = null
-let caseOpenAudio = null
+// 「机械熔炉」three.js 特效（常驻背景层，可交互开合）
+const furnaceRef = ref(null)
+let furnace = null
+const showFurnaceHint = ref(false) // 「点击熔炉开启」提示
+const furnaceInteractive = ref(false) // 熔炉是否处于可点击态（closed）
+let furnaceCloseAudio = null // 液压机构合拢音
+let furnaceLockAudio = null // 炉体锁合冲击音
+let furnaceReleaseAudio = null
+let furnaceLiftAudio = null
+let furnaceSpinAudio = null
+let furnaceRumbleAudio = null
+let energyIgniteAudio = null
+let energyChargeAudio = null
+let energyClimaxAudio = null
+let resultRevealAudio = null
 
 function playSound(el) {
   if (!el) return
@@ -321,6 +318,43 @@ function playSound(el) {
   } catch {
     /* 忽略自动播放限制 */
   }
+}
+
+function stopSound(el) {
+  if (!el) return
+  el.pause()
+  el.currentTime = 0
+}
+
+function stopFurnaceRevealAudio() {
+  [
+    furnaceReleaseAudio,
+    furnaceLiftAudio,
+    furnaceSpinAudio,
+    furnaceRumbleAudio,
+    energyIgniteAudio,
+    energyChargeAudio,
+    energyClimaxAudio,
+    resultRevealAudio,
+  ].forEach(stopSound)
+}
+
+function prepareAudio(src, volume) {
+  const audio = new Audio(src)
+  audio.volume = volume
+  audio.preload = 'auto'
+  return audio
+}
+
+function triggerPageImpact(duration = 480) {
+  clearTimeout(pageImpactTimer)
+  cancelAnimationFrame(pageImpactFrame)
+  pageImpact.value = false
+  pageImpactDuration.value = duration
+  pageImpactFrame = requestAnimationFrame(() => {
+    pageImpact.value = true
+    pageImpactTimer = setTimeout(() => (pageImpact.value = false), duration)
+  })
 }
 
 const cfg = computed(() => currentOutcome.value)
@@ -451,21 +485,18 @@ function autoFill() {
   toast(`已一键添加 ${need} 件${RARITIES[rk].name}材料`)
 }
 
-async function startCraft() {
+function startCraft() {
   if (running.value || !canConfirmItems.value) return
   running.value = true
-  showBuilder.value = false
   // 按 CS2 汰换规则生成本次结果（随机产出皮肤 → 盈亏随之产生）
   currentOutcome.value = generateOutcome(selected.value, currentNeed.value)
-  if (animMode.value === 'forge') {
-    startForge()
-    return
-  }
-  if (animMode.value === 'contract') {
-    startContract()
-    return
-  }
-  startClassic()
+  // 先让左右面板完整离场，再由 onBuilderLeaveComplete 启动 3D 合同
+  showBuilder.value = false
+}
+
+function onBuilderLeaveComplete() {
+  if (!running.value || showBuilder.value || showContract.value) return
+  startContract()
 }
 
 async function startClassic() {
@@ -563,38 +594,15 @@ function showResultView() {
   showProcess.value = false
   showResult.value = true
   running.value = false
-}
-
-async function startForge() {
-  showForge.value = true
-  forgePhase.value = ''
-  const colors = selected.value.map((m) => m[2])
-  await nextTick()
-  if (!forge) forge = createForge(forgeRef.value)
-  forge.resize()
-  forge.play({
-    count: currentNeed.value,
-    colors,
-    resultColor: cfg.value.color,
-    onIgnite: () => playSound(igniteAudio),
-    onPhase: () => {}, // 不显示阶段文字（如“投料/升火/落锤”）
-    onStrike: () => {
-      playSound(anvilAudio)
-      edgeColor.value = cfg.value.edge
-      edgeOn.value = true
-      setTimeout(() => (edgeOn.value = false), 2400)
-    },
-    onDone: () => {
-      forgePhase.value = ''
-      showForge.value = false
-      showResultView()
-    },
-  })
+  if (window.innerWidth <= 900) {
+    window.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }
 }
 
 async function startContract() {
   showContract.value = true
   contractPhase.value = ''
+  showStampHint.value = false
   // 合同逐条列出的材料：名称 + 品质色
   const items = selected.value.map((m) => ({ name: m[1], color: m[2] }))
   await nextTick()
@@ -603,62 +611,118 @@ async function startContract() {
   contract.play({
     items,
     resultTag: cfg.value.tag,
-    onPhase: () => {}, // 不显示阶段文字（如“呈递合同/核对材料/签字/盖章”）
+    onPhase: () => {}, // 不显示阶段文字
     onPaper: () => playSound(paperAudio),
-    onSign: () => playSound(penAudio),
+    onAwaitStamp: () => {
+      // 合同到达盖章位置，显示「点击此处盖章」提示
+      const position = contract.getStampScreenPosition()
+      const canvasRect = contractRef.value.getBoundingClientRect()
+      stampHintStyle.value = {
+        left: `${canvasRect.left + position.x}px`,
+        top: `${canvasRect.top + position.y}px`,
+        width: `${position.diameter}px`,
+        height: `${position.diameter}px`,
+      }
+      showStampHint.value = true
+    },
     onStamp: () => {
       playSound(stampAudio)
-      edgeColor.value = cfg.value.edge
-      edgeOn.value = true
-      setTimeout(() => (edgeOn.value = false), 1600)
     },
     onDone: () => {
       contractPhase.value = ''
       showContract.value = false
-      startCase()
+      showStampHint.value = false
+      // 合同生效 → 熔炉合上 → 等待用户点击开启
+      closeFurnace()
     },
   })
 }
 
-// 合同签订完成后：武器箱落下 → 点击开箱 → 品质色光芒涌出 → 弹出结果
-async function startCase() {
-  showCase.value = true
-  casePhase.value = ''
-  await nextTick()
-  if (!weaponCase) weaponCase = createCase(caseRef.value)
-  weaponCase.resize()
-  weaponCase.play({
-    color: cfg.value.color,
-    onLand: () => playSound(caseLandAudio),
-    onPhase: (txt) => (casePhase.value = txt),
-    onOpen: () => playSound(caseOpenAudio),
-    onGlow: () => {
-      edgeColor.value = cfg.value.edge
-      edgeOn.value = true
-      setTimeout(() => (edgeOn.value = false), 1800)
+// 用户点击「盖章」提示
+function clickStampHint() {
+  if (!showStampHint.value) return
+  showStampHint.value = false
+  contract?.triggerStamp()
+}
+
+// 合同生效后：熔炉合上（机械动画）→ 关闭态等待用户点击开启
+function closeFurnace() {
+  if (!furnace) return
+  showFurnaceHint.value = false
+  furnaceInteractive.value = false
+  furnaceRumbling.value = false
+  edgeOn.value = false
+  furnace.close({
+    onCloseStart: () => {
+      playSound(furnaceCloseAudio)
     },
-    onReveal: () => {},
-    onDone: () => {
-      casePhase.value = ''
-      showCase.value = false
-      showResultView()
+    onClose: () => {
+      playSound(furnaceLockAudio)
+    },
+    onClosed: () => {
+      // 合上完毕，允许点击开启，显示提示
+      furnace.armReveal({
+        color: cfg.value.color,
+        onOpen: () => {
+          showFurnaceHint.value = false
+          furnaceInteractive.value = false
+          stopFurnaceRevealAudio()
+          playSound(furnaceReleaseAudio)
+          playSound(furnaceLiftAudio)
+        },
+        onColumn: () => {
+          playSound(energyIgniteAudio)
+          playSound(energyChargeAudio)
+          triggerPageImpact(360)
+        },
+        onRumbleStart: () => {
+          furnaceRumbling.value = true
+          playSound(furnaceSpinAudio)
+          playSound(furnaceRumbleAudio)
+        },
+        onRumbleEnd: () => {
+          furnaceRumbling.value = false
+          stopSound(furnaceSpinAudio)
+          stopSound(furnaceRumbleAudio)
+          stopSound(energyChargeAudio)
+        },
+        onClimax: () => {
+          flashBoom.value = true
+          playSound(energyClimaxAudio)
+          triggerPageImpact(520)
+          setTimeout(() => (flashBoom.value = false), 460)
+        },
+        onDone: () => {
+          edgeOn.value = false
+          furnaceInteractive.value = false
+          furnaceRumbling.value = false
+          playSound(resultRevealAudio)
+          showResultView()
+        },
+      })
+      furnaceInteractive.value = true
+      showFurnaceHint.value = true
     },
   })
 }
 
 function resetAll() {
+  clearTimeout(pageImpactTimer)
+  cancelAnimationFrame(pageImpactFrame)
+  pageImpact.value = false
+  furnaceRumbling.value = false
+  stopFurnaceRevealAudio()
   showBuilder.value = true
   showProcess.value = false
   showResult.value = false
-  showForge.value = false
-  forgePhase.value = ''
-  forge?.stop()
   showContract.value = false
   contractPhase.value = ''
+  showStampHint.value = false
   contract?.stop()
-  showCase.value = false
-  casePhase.value = ''
-  weaponCase?.stop()
+  // 熔炉回到打开待机态
+  showFurnaceHint.value = false
+  furnaceInteractive.value = false
+  furnace?.showOpen()
   edgeOn.value = false
   running.value = false
   selected.value = []
@@ -677,60 +741,67 @@ function setCardEl(el, i) {
 }
 
 onMounted(() => {
-  if (bgRef.value) starField = createStarField(bgRef.value)
-  anvilAudio = new Audio('/sfx/anvil-strike.wav')
-  anvilAudio.volume = 0.9
-  anvilAudio.preload = 'auto'
-  igniteAudio = new Audio('/sfx/forge-ignite.wav')
-  igniteAudio.volume = 0.5
-  igniteAudio.preload = 'auto'
-  penAudio = new Audio('/sfx/mark.wav')
-  penAudio.volume = 0.85
-  penAudio.preload = 'auto'
+  // 熔炉常驻背景层，进入页面即打开待机
+  if (furnaceRef.value) {
+    furnace = createFurnace(furnaceRef.value)
+    furnace.showOpen()
+  }
+  furnaceCloseAudio = new Audio('/sfx/furnace-close.wav')
+  furnaceCloseAudio.volume = 0.72
+  furnaceCloseAudio.preload = 'auto'
+  furnaceLockAudio = new Audio('/sfx/furnace-lock.wav')
+  furnaceLockAudio.volume = 0.88
+  furnaceLockAudio.preload = 'auto'
+  furnaceReleaseAudio = prepareAudio('/sfx/furnace-release.wav', 0.75)
+  furnaceLiftAudio = prepareAudio('/sfx/furnace-lift.wav', 0.68)
+  furnaceSpinAudio = prepareAudio('/sfx/furnace-spin.wav', 0.52)
+  furnaceRumbleAudio = prepareAudio('/sfx/furnace-rumble.wav', 0.28)
+  energyIgniteAudio = prepareAudio('/sfx/energy-ignite.wav', 0.48)
+  energyChargeAudio = prepareAudio('/sfx/energy-charge.wav', 0.42)
+  energyClimaxAudio = prepareAudio('/sfx/energy-climax.wav', 0.58)
+  resultRevealAudio = prepareAudio('/sfx/result-reveal.wav', 0.62)
   paperAudio = new Audio('/sfx/paper-rustle.wav')
   paperAudio.volume = 0.6
   paperAudio.preload = 'auto'
   stampAudio = new Audio('/sfx/stamp.wav')
   stampAudio.volume = 0.85
   stampAudio.preload = 'auto'
-  caseLandAudio = new Audio('/sfx/case-land.wav')
-  caseLandAudio.volume = 0.8
-  caseLandAudio.preload = 'auto'
-  caseOpenAudio = new Audio('/sfx/case-open.wav')
-  caseOpenAudio.volume = 0.85
-  caseOpenAudio.preload = 'auto'
 })
 
 onBeforeUnmount(() => {
   clearTimeout(toastTimer)
-  starField?.dispose()
-  forge?.dispose()
+  clearTimeout(pageImpactTimer)
+  cancelAnimationFrame(pageImpactFrame)
+  stopFurnaceRevealAudio()
   contract?.dispose()
-  weaponCase?.dispose()
+  furnace?.dispose()
 })
 </script>
 
 <template>
   <n-config-provider :theme="darkTheme" :theme-overrides="themeOverrides">
-    <div class="app">
+    <div
+      class="app"
+      :class="{
+        'impact-shake': pageImpact,
+        'furnace-rumbling': furnaceRumbling,
+      }"
+      :style="{ '--impact-duration': `${pageImpactDuration}ms` }"
+    >
+      <!-- 常驻 3D 熔炉铺满视口，与页面背景图融为一体 -->
+      <canvas
+        class="furnace-layer"
+        :class="{ interactive: furnaceInteractive, dimmed: showResult }"
+        ref="furnaceRef"
+      ></canvas>
       <div class="top">
         <div class="brand">元游猫 <span>汰换合同交互原型</span></div>
         <div class="top-actions">
-          <div class="anim-switch">
-            <span class="anim-label">动效</span>
-            <n-select
-              v-model:value="animMode"
-              :options="animOptions"
-              size="small"
-              class="anim-select"
-              :consistent-menu-width="false"
-            />
-          </div>
+          <!-- 动效模式切换已移除，现在使用统一流程 -->
         </div>
       </div>
       <main class="layout">
         <section class="stage" :class="{ shake: stageShake }" ref="stageRef">
-          <canvas class="stage-bg" ref="bgRef"></canvas>
           <div class="stage-head">
             <div>
               <div class="eyebrow">TRADE UP CONTRACT</div>
@@ -745,9 +816,10 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div class="builder" :class="{ hidden: !showBuilder }">
+          <div class="builder">
             <!-- 左：符合汰换资格的材料池 -->
-            <section class="inv-panel panel-box">
+            <Transition appear name="builder-left">
+            <section v-show="showBuilder" class="inv-panel panel-box">
               <div class="inv-head">
                 <div class="inv-title">
                   <b>{{ eligibleCount }}</b
@@ -790,9 +862,15 @@ onBeforeUnmount(() => {
                 </n-button>
               </div>
             </section>
+            </Transition>
 
             <!-- 右：汰换合同栏 -->
-            <section class="contract-panel panel-box">
+            <Transition
+              appear
+              name="builder-right"
+              @after-leave="onBuilderLeaveComplete"
+            >
+            <section v-show="showBuilder" class="contract-panel panel-box">
               <div
                 class="contract-drop"
                 :class="{ drag: dropActive }"
@@ -853,6 +931,7 @@ onBeforeUnmount(() => {
                 </n-button>
               </div>
             </section>
+            </Transition>
           </div>
 
           <div class="process" :class="{ show: showProcess }">
@@ -872,30 +951,28 @@ onBeforeUnmount(() => {
           </div>
 
           <canvas
-            class="forge-layer"
-            :class="{ show: showForge }"
-            ref="forgeRef"
-          ></canvas>
-          <div class="forge-phase" :class="{ show: showForge && !!forgePhase }">
-            {{ forgePhase }}
-          </div>
-
-          <canvas
-            class="forge-layer"
+            class="forge-layer contract-layer"
             :class="{ show: showContract }"
             ref="contractRef"
           ></canvas>
           <div class="forge-phase contract-phase" :class="{ show: showContract && !!contractPhase }">
             {{ contractPhase }}
           </div>
+          <!-- 「点击此处盖章」提示：合同到达盖章位置时显示，覆盖在印章位置 -->
+          <button
+            class="stamp-hint"
+            :class="{ show: showStampHint }"
+            :style="stampHintStyle"
+            @click="clickStampHint"
+          >
+            <span class="stamp-ring"></span>
+            <span class="stamp-text">点击此处<br />盖章</span>
+          </button>
 
-          <canvas
-            class="forge-layer case-layer"
-            :class="{ show: showCase }"
-            ref="caseRef"
-          ></canvas>
-          <div class="forge-phase case-phase" :class="{ show: showCase && !!casePhase }">
-            {{ casePhase }}
+          <!-- 「点击熔炉开启」提示：熔炉合上后显示，引导用户点击炉体 -->
+          <div class="furnace-hint" :class="{ show: showFurnaceHint }">
+            <span class="fh-arrow">▲</span>
+            <span class="fh-text">点击熔炉开启汰换</span>
           </div>
 
           <div class="flash" :class="{ boom: flashBoom }"></div>
@@ -961,13 +1038,71 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, 1fr);
 }
 
-.stage-bg {
-  position: absolute;
+/* 舞台透明化：去掉实心背景/边框/阴影/网格与辉光遮罩，
+   让 .app 的背景图透出来，3D 熔炉直接叠在背景图上（同一图层观感） */
+.stage {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  overflow: visible !important;
+}
+.stage::before,
+.stage::after {
+  display: none !important;
+}
+
+/* 3D 熔炉铺满整个视口，与背景图融为一体。 */
+.furnace-layer {
+  position: fixed;
   inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 1;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
   pointer-events: none;
+  transition: opacity 0.35s ease, filter 0.35s ease;
+}
+/* closed 态开放点击（Raycaster 命中炉体才开启） */
+.furnace-layer.interactive {
+  pointer-events: auto;
+  z-index: 4;
+}
+.furnace-layer.dimmed {
+  opacity: 0.16;
+  filter: brightness(0.55) saturate(0.55);
+}
+
+/* 「点击熔炉开启」提示 */
+.furnace-hint {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  transform: translate(-50%, 0);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: #ffd9a0;
+  font-size: 16px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-shadow: 0 0 16px rgba(255, 140, 50, 0.7);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+.furnace-hint.show {
+  opacity: 1;
+  animation: furnaceHintFloat 1.6s ease-in-out infinite;
+}
+.furnace-hint .fh-arrow {
+  font-size: 22px;
+  color: #ffcf28;
+}
+@keyframes furnaceHintFloat {
+  0%, 100% { transform: translate(-50%, 0); }
+  50% { transform: translate(-50%, -8px); }
 }
 
 /* 右上角：切换汰换动效 */
@@ -998,6 +1133,7 @@ onBeforeUnmount(() => {
   inset: 0;
   width: 100%;
   height: 100%;
+  background: transparent;
   z-index: 5;
   opacity: 0;
   pointer-events: none;
@@ -1005,6 +1141,12 @@ onBeforeUnmount(() => {
 }
 .forge-layer.show {
   opacity: 1;
+}
+.forge-layer.contract-layer {
+  position: fixed;
+  inset: 88px 24px 24px;
+  width: calc(100vw - 48px);
+  height: calc(100vh - 112px);
 }
 .forge-phase {
   position: absolute;
@@ -1041,25 +1183,63 @@ onBeforeUnmount(() => {
 .forge-layer.case-layer.show {
   pointer-events: auto;
 }
-.forge-phase.case-phase {
-  border-color: rgba(212, 175, 55, 0.5);
-  background: rgba(14, 12, 20, 0.62);
+
+/* 「点击此处盖章」提示按钮 */
+.stamp-hint {
+  position: fixed;
+  z-index: 7;
+  width: 120px;
+  height: 120px;
+  border: 3px solid rgba(212, 175, 55, 0.9);
+  border-radius: 50%;
+  background: rgba(255, 207, 40, 0.12);
+  backdrop-filter: blur(8px);
   color: #ffe9b0;
-  text-shadow: 0 0 16px rgba(212, 175, 55, 0.6);
-  animation: casePhasePulse 1.6s ease-in-out infinite;
+  font-size: 15px;
+  font-weight: 900;
+  line-height: 1.4;
+  letter-spacing: 0.05em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.8);
+  pointer-events: none;
+  transition: all 0.4s ease;
+  text-shadow: 0 0 12px rgba(212, 175, 55, 0.8);
 }
-@keyframes casePhasePulse {
-  0%,
-  100% {
-    opacity: 1;
+.stamp-hint.show {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+  pointer-events: auto;
+  animation: stampHintPulse 1.8s ease-in-out infinite;
+}
+.stamp-hint:hover {
+  background: rgba(255, 207, 40, 0.22);
+  border-color: rgba(212, 175, 55, 1);
+  box-shadow: 0 0 24px rgba(212, 175, 55, 0.6);
+}
+.stamp-hint .stamp-ring {
+  position: absolute;
+  inset: -8px;
+  border: 2px solid rgba(212, 175, 55, 0.4);
+  border-radius: 50%;
+}
+.stamp-hint .stamp-text {
+  position: relative;
+  z-index: 1;
+  text-align: center;
+}
+@keyframes stampHintPulse {
+  0%, 100% {
+    transform: translate(-50%, -50%) scale(1);
+    box-shadow: 0 0 16px rgba(212, 175, 55, 0.4);
   }
   50% {
-    opacity: 0.55;
+    transform: translate(-50%, -50%) scale(1.08);
+    box-shadow: 0 0 28px rgba(212, 175, 55, 0.6);
   }
-}
-/* 未显示时不参与动画，避免叠加 transition 的 opacity */
-.forge-phase.case-phase:not(.show) {
-  animation: none;
 }
 
 /* ===== 汰换构建区：左右两栏 ===== */
@@ -1067,6 +1247,35 @@ onBeforeUnmount(() => {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.02fr);
   gap: 22px;
   align-items: stretch;
+}
+
+.builder-left-enter-active,
+.builder-right-enter-active {
+  transition:
+    transform 0.62s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.48s ease;
+  will-change: transform, opacity;
+}
+.builder-right-enter-active {
+  transition-delay: 0.07s;
+}
+.builder-left-leave-active,
+.builder-right-leave-active {
+  pointer-events: none;
+  transition:
+    transform 0.5s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.46s ease-in;
+  will-change: transform, opacity;
+}
+.builder-left-enter-from,
+.builder-left-leave-to {
+  opacity: 0;
+  transform: translate3d(-88px, 0, 0) scale(0.985);
+}
+.builder-right-enter-from,
+.builder-right-leave-to {
+  opacity: 0;
+  transform: translate3d(88px, 0, 0) scale(0.985);
 }
 
 .panel-box {
@@ -1410,12 +1619,45 @@ onBeforeUnmount(() => {
   .builder {
     grid-template-columns: 1fr;
   }
+  .builder-left-enter-from,
+  .builder-left-leave-to {
+    transform: translate3d(-36px, 0, 0) scale(0.99);
+  }
+  .builder-right-enter-from,
+  .builder-right-leave-to {
+    transform: translate3d(36px, 0, 0) scale(0.99);
+  }
+  .stamp-hint {
+    border-width: 2px;
+    font-size: 12px;
+  }
+  .forge-layer.contract-layer {
+    inset: 80px 12px 12px;
+    width: calc(100vw - 24px);
+    height: calc(100vh - 92px);
+  }
   .inv-list {
     grid-template-columns: repeat(2, minmax(0, 1fr));
     max-height: 300px;
   }
   .contract-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .builder-left-enter-active,
+  .builder-right-enter-active,
+  .builder-left-leave-active,
+  .builder-right-leave-active {
+    transition-duration: 1ms;
+    transition-delay: 0s;
+  }
+  .builder-left-enter-from,
+  .builder-left-leave-to,
+  .builder-right-enter-from,
+  .builder-right-leave-to {
+    transform: none;
   }
 }
 </style>

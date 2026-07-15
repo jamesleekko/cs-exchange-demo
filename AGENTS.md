@@ -2,37 +2,32 @@
 
 ## Project Structure & Module Organization
 
-This repository is a Vite + Vue 3 prototype for a CS2-style trade-up contract experience. The main application logic and UI live in `src/App.vue`; `src/main.js` only mounts the app. Global styles are in `src/style.css`, while component-scoped styles are kept inside Vue single-file components.
-
-Three.js animation modules live in `src/three/`, including forge, contract, and starfield effects. Static audio assets are stored in `public/sfx/`. The script `scripts/gen-anvil-sound.mjs` regenerates procedural sound effects and should be preferred over hand-editing generated WAV files.
+This client-only Vite + Vue 3 prototype implements a CS2-style trade-up contract. `src/App.vue` owns rules, state, and the `<script setup>` workflow; `src/main.js` mounts it, and `src/style.css` provides global styling. Active Three.js effects live in `src/three/contract.js` and `src/three/furnace.js`; `case.js` and `forge.js` are not connected to the UI. Runtime assets are under `public/bg/`, `public/models/`, and `public/sfx/`. `scripts/` contains asset generators, Blender export tooling, and Playwright smoke helpers. There is no backend or dedicated test directory.
 
 ## Build, Test, and Development Commands
 
-- `npm run dev` starts the Vite development server for local iteration.
-- `npm run build` creates the production build in `dist/`.
-- `npm run preview` serves the built output for a production-like smoke test.
-- `node scripts/gen-anvil-sound.mjs` regenerates forge/anvil audio assets in `public/sfx/`.
+Use npm with Node 20.19+ or 22.12+ (required by Vite 7).
 
-There is currently no configured test runner or lint command.
+- `npm run dev` starts Vite on port 5173 and opens the app.
+- `npm run build` creates the production bundle in `dist/`.
+- `npm run preview` serves the production bundle.
+- `node scripts/gen-anvil-sound.mjs` regenerates the forge, furnace, contract, and pen WAV assets in `public/sfx/`.
+- `npm run dev -- --port 5175`, followed in another terminal by `node scripts/test-furnace.mjs`, exercises the full interactive flow with Playwright screenshots.
 
 ## Coding Style & Naming Conventions
 
-Use Vue 3 Composition API with `<script setup>` for component logic. Keep state, computed values, and view-flow methods grouped by feature so the large `App.vue` remains navigable. Use descriptive camelCase names for variables and functions, and PascalCase for component names if new components are introduced.
+Use two-space indentation, single-quoted JavaScript, and Vue 3 Composition API with `<script setup>`. No formatter or linter is configured, so match surrounding semicolon usage. Use camelCase for variables/functions, PascalCase for Vue components, and `createFeature` for Three.js factories. Group feature logic in `App.vue`.
 
-UI copy and comments may follow the existing Chinese-language convention. Preserve the current game-rule invariants when editing tier data: update rarity definitions, rarity ordering, skin pools, and base prices together.
+When changing tiers, update `RARITIES`, `RARITY_ORDER`, `SKIN_POOL`, and `BASE_PRICE` together. Three.js modules need explicit lifecycle methods; `dispose()` must release RAFs, listeners, observers, scene resources, and renderer state. Regenerate assets instead of hand-editing WAV or GLB output.
 
 ## Testing Guidelines
 
-Because no automated tests are configured, validate changes manually with `npm run dev` and run `npm run build` before submitting. For animation or Three.js changes, verify that forge sequences start, resize, stop, and dispose cleanly without stale animation loops or WebGL context leaks.
-
-If tests are added later, prefer focused Vitest unit coverage for pure trade-up rule helpers and Playwright coverage for the core user flow.
+There is no `npm test`, coverage requirement, or lint command. Before submission, run `npm run build` and manually test selection, confirmation, stamping, furnace close/open, reveal, reset, and responsive layout. For animation changes, verify resize, stop, and disposal without stale RAF loops, duplicate callbacks, console errors, or leaked WebGL contexts. `scripts/test-*.mjs` are standalone smoke helpers, not a managed suite.
 
 ## Commit & Pull Request Guidelines
 
-Recent commits use concise conventional prefixes, especially `feat:`. Continue that style, for example `feat: add contract sound cue` or `fix: prevent duplicate forge reveal`.
+History uses concise conventional prefixes, primarily `feat:`; use `fix:`, `refactor:`, or `docs:` when appropriate. Keep commits focused. Pull requests should summarize behavior and validation, link issues, and include screenshots or recordings for visual changes. Identify generated assets and record their rebuild command.
 
-Pull requests should include a short behavior summary, manual validation steps, linked issues when applicable, and screenshots or screen recordings for visible UI or animation changes. Note any changes to generated assets and include the command used to regenerate them.
+## Agent-Specific Terminology
 
-## Agent-Specific Instructions
-
-For discussions about the collection projects, `shared-merchant-mps` is the MPS main app, `payment-b2b-merchant-platform` is the MPS micro-app sub-application, and `recv-ops-platform` is the OPS platform. When discussing MPS, treat it as the main app plus sub-application system connected by `micro-app`.
+For collection-platform discussions, MPS means `shared-merchant-mps` plus the `payment-b2b-merchant-platform` micro-app connected through `micro-app`. OPS refers to `recv-ops-platform`.

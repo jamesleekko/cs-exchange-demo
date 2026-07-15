@@ -3,6 +3,9 @@
 // 产物：
 //   public/sfx/anvil-strike.wav  铁锤敲砧（冲击瞬态 + 低频重击 + 非谐金属泛音余韵）
 //   public/sfx/forge-ignite.wav  炉火升腾（低频轰鸣 whoosh + 火焰噼啪）
+//   public/sfx/furnace-close.wav 液压炉体合拢（伺服下行 + 金属摩擦）
+//   public/sfx/furnace-lock.wav  炉体锁合（重型金属冲击 + 未来感短泛音）
+//   public/sfx/furnace-open.wav  锁扣释放并开启（机械解锁 + 伺服上行）
 //   public/sfx/pen-check.wav     签字笔打勾（笔尖划纸沙沙 + 收尾顿笔）
 //   public/sfx/paper-rustle.wav  合同纸张（落定/抽离的翻动摩擦声）
 //   public/sfx/stamp-impact.wav  印章落下（低频木质冲击 + 墨垫压扁瞬态）
@@ -163,6 +166,75 @@ function makeForgeIgnite() {
   return out
 }
 
+function addMechanicalSweep(out, start, duration, fromHz, toHz, amplitude) {
+  const s0 = Math.floor(start * SR)
+  const count = Math.floor(duration * SR)
+  let phase = 0
+  let filteredNoise = 0
+  for (let j = 0; j < count && s0 + j < out.length; j++) {
+    const u = j / count
+    const env = Math.sin(Math.PI * u) ** 0.55
+    const frequency = fromHz + (toHz - fromHz) * u
+    phase += 2 * Math.PI * frequency / SR
+    filteredNoise += 0.12 * ((Math.random() * 2 - 1) - filteredNoise)
+    const servo = Math.sin(phase) + 0.28 * Math.sin(phase * 2.03)
+    out[s0 + j] += (servo * 0.42 + filteredNoise * 0.7) * env * amplitude
+  }
+}
+
+// 液压驱动下行，结尾留给独立的锁合冲击声。
+function makeFurnaceClose() {
+  const out = new Float32Array(Math.floor(SR * 2.35))
+  addMechanicalSweep(out, 0, 2.25, 92, 46, 0.72)
+  for (let i = 0; i < out.length; i++) {
+    const t = i / SR
+    out[i] += 0.16 * Math.sin(2 * Math.PI * 31 * t) * Math.sin(Math.PI * t / 2.35)
+    out[i] = softClip(out[i], 1.25)
+  }
+  normalize(out, 0.78)
+  fadeEdges(out, 30, 80)
+  return out
+}
+
+// 低沉炉体撞击为主体，短促非谐高频尾音提供未来工业质感。
+function makeFurnaceLock() {
+  const out = new Float32Array(Math.floor(SR * 1.05))
+  const modes = [[74, 0.16, 1], [143, 0.22, 0.72], [318, 0.3, 0.42], [927, 0.2, 0.2], [1511, 0.16, 0.16], [2387, 0.12, 0.11]]
+  let noise = 0
+  for (let i = 0; i < out.length; i++) {
+    const t = i / SR
+    for (const [frequency, decay, amplitude] of modes) {
+      const detune = 1 + 0.035 * Math.exp(-t / 0.035)
+      out[i] += amplitude * Math.exp(-t / decay) * Math.sin(2 * Math.PI * frequency * detune * t)
+    }
+    noise += 0.32 * ((Math.random() * 2 - 1) - noise)
+    out[i] += noise * 0.9 * Math.exp(-t / 0.009)
+    if (t > 0.075) out[i] += 0.18 * Math.exp(-(t - 0.075) / 0.08) * Math.sin(2 * Math.PI * 1760 * (t - 0.075))
+    out[i] = softClip(out[i], 1.35)
+  }
+  normalize(out, 0.94)
+  fadeEdges(out, 0, 70)
+  return out
+}
+
+function makeFurnaceOpen() {
+  const out = new Float32Array(Math.floor(SR * 2.5))
+  // 双锁扣先后释放。
+  for (const start of [0, 0.095]) {
+    const s0 = Math.floor(start * SR)
+    for (let i = s0; i < Math.min(out.length, s0 + SR * 0.18); i++) {
+      const t = (i - s0) / SR
+      out[i] += 0.48 * Math.exp(-t / 0.035) * Math.sin(2 * Math.PI * 640 * t)
+      out[i] += 0.22 * (Math.random() * 2 - 1) * Math.exp(-t / 0.01)
+    }
+  }
+  addMechanicalSweep(out, 0.16, 2.28, 54, 112, 0.66)
+  for (let i = 0; i < out.length; i++) out[i] = softClip(out[i], 1.2)
+  normalize(out, 0.82)
+  fadeEdges(out, 0, 90)
+  return out
+}
+
 // ---------- 签字笔打勾 ----------
 // 两笔利落勾画：短撇 + 转角微停 + 长挑；以带通摩擦噪声为主，避免正弦「电子音」。
 function makePenCheck() {
@@ -303,6 +375,9 @@ function makeStampImpact() {
 mkdirSync(OUT_DIR, { recursive: true })
 writeFileSync(resolve(OUT_DIR, 'anvil-strike.wav'), encodeWav(makeAnvilStrike()))
 writeFileSync(resolve(OUT_DIR, 'forge-ignite.wav'), encodeWav(makeForgeIgnite()))
+writeFileSync(resolve(OUT_DIR, 'furnace-close.wav'), encodeWav(makeFurnaceClose()))
+writeFileSync(resolve(OUT_DIR, 'furnace-lock.wav'), encodeWav(makeFurnaceLock()))
+writeFileSync(resolve(OUT_DIR, 'furnace-open.wav'), encodeWav(makeFurnaceOpen()))
 writeFileSync(resolve(OUT_DIR, 'pen-check.wav'), encodeWav(makePenCheck()))
 writeFileSync(resolve(OUT_DIR, 'paper-rustle.wav'), encodeWav(makePaperRustle()))
 writeFileSync(resolve(OUT_DIR, 'stamp-impact.wav'), encodeWav(makeStampImpact()))
