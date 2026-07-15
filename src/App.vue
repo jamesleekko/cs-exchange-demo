@@ -40,6 +40,9 @@ const RARITY_ORDER = [
   'gold',
 ]
 
+const GENERIC_WEAPON_URL = `${import.meta.env.BASE_URL}weapons/generic-weapon.png`
+const FILTER_RARITIES = RARITY_ORDER.filter((key) => RARITIES[key].need > 0)
+
 // 各品质材料（代号, 名称）。可汰换品质提供足量，便于凑齐所需数量。
 const SKIN_POOL = {
   consumer: [
@@ -249,6 +252,9 @@ const selected = ref([])
 const confirmChecked = ref(false)
 const dragItem = ref(null)
 const dropActive = ref(false)
+const rarityFilter = ref('all')
+const inventoryRefreshing = ref(false)
+let inventoryRefreshTimer = null
 
 // 本次汰换结果（严格按 CS2 规则生成，见 generateOutcome）
 const PLACEHOLDER_OUTCOME = {
@@ -297,8 +303,6 @@ let stampAudio = null
 // 「机械熔炉」three.js 特效（常驻背景层，可交互开合）
 const furnaceRef = ref(null)
 let furnace = null
-const showFurnaceHint = ref(false) // 「点击熔炉开启」提示
-const furnaceInteractive = ref(false) // 熔炉是否处于可点击态（closed）
 let furnaceCloseAudio = null // 液压机构合拢音
 let furnaceLockAudio = null // 炉体锁合冲击音
 let furnaceReleaseAudio = null
@@ -364,6 +368,11 @@ const available = computed(() =>
     (it) => RARITIES[it[4]].need > 0 && !selected.value.includes(it),
   ),
 )
+const filteredAvailable = computed(() =>
+  rarityFilter.value === 'all'
+    ? available.value
+    : available.value.filter((item) => item[4] === rarityFilter.value),
+)
 
 // 已选材料的品质（取第一件）决定所需数量与后续可添加的材料
 const activeRarity = computed(() =>
@@ -379,14 +388,14 @@ const eligibleCount = computed(
 const canConfirmItems = computed(
   () => !!activeRarity.value && selected.value.length === currentNeed.value,
 )
-const countText = computed(() =>
-  activeRarity.value ? `${selected.value.length}/${currentNeed.value}` : '0/—',
-)
-const statusText = computed(() => {
-  if (!selected.value.length) return '请拖入同一品质的材料'
-  if (selected.value.length < currentNeed.value)
-    return `继续添加（${RARITIES[activeRarity.value].name}需 ${currentNeed.value} 件）`
-  return '材料已齐，勾选后确认'
+const contractGuideText = computed(() => {
+  if (!activeRarity.value) return '选择 10 件相同品质（普通级起）的道具'
+  return `选择 ${currentNeed.value} 件相同品质（${RARITIES[activeRarity.value].name}）的道具`
+})
+const expectedOutcomeText = computed(() => {
+  if (!activeRarity.value) return '一件更高一级品质的道具'
+  const nextKey = RARITY_ORDER[RARITY_ORDER.indexOf(activeRarity.value) + 1]
+  return nextKey ? `一件${RARITIES[nextKey].name}道具` : '一件更高一级品质的道具'
 })
 
 function isTradeable(m) {
@@ -394,6 +403,10 @@ function isTradeable(m) {
 }
 function rarityName(m) {
   return RARITIES[m[4]].name
+}
+function skinName(m) {
+  const separator = m[1].indexOf('|')
+  return separator >= 0 ? m[1].slice(separator + 1).trim() : m[1]
 }
 
 // CS2 磨损等级（Exterior）：区间与游戏一致（下含上不含），
@@ -467,6 +480,17 @@ function resetSelected() {
   selected.value = []
   confirmChecked.value = false
   toast('已清空汰换材料')
+}
+
+async function refreshInventory() {
+  clearTimeout(inventoryRefreshTimer)
+  inventoryRefreshing.value = false
+  await nextTick()
+  inventoryRefreshing.value = true
+  inventoryRefreshTimer = setTimeout(() => {
+    inventoryRefreshing.value = false
+  }, 520)
+  toast('可用库存已刷新')
 }
 
 function autoFill() {
@@ -606,8 +630,11 @@ async function startContract() {
   // 合同逐条列出的材料：名称 + 品质色
   const items = selected.value.map((m) => ({ name: m[1], color: m[2] }))
   await nextTick()
+  if (!running.value || !contractRef.value || !furnace) return
   if (!contract) contract = createContract(contractRef.value)
   contract.resize()
+  // 面板离场后，同帧启动炉体下降与合同自底部抽出。
+  lowerFurnace()
   contract.play({
     items,
     resultTag: cfg.value.tag,
@@ -632,8 +659,8 @@ async function startContract() {
       contractPhase.value = ''
       showContract.value = false
       showStampHint.value = false
-      // 合同生效 → 熔炉合上 → 等待用户点击开启
-      closeFurnace()
+      // 合同生效并抽离后直接开启；若炉体仍在下降，open() 会排队到闭合完成。
+      furnace?.open()
     },
   })
 }
@@ -645,11 +672,9 @@ function clickStampHint() {
   contract?.triggerStamp()
 }
 
-// 合同生效后：熔炉合上（机械动画）→ 关闭态等待用户点击开启
-function closeFurnace() {
+// 材料确认后：熔炉上部下降合拢，同时准备后续自动揭晓。
+function lowerFurnace() {
   if (!furnace) return
-  showFurnaceHint.value = false
-  furnaceInteractive.value = false
   furnaceRumbling.value = false
   edgeOn.value = false
   furnace.close({
@@ -660,12 +685,9 @@ function closeFurnace() {
       playSound(furnaceLockAudio)
     },
     onClosed: () => {
-      // 合上完毕，允许点击开启，显示提示
       furnace.armReveal({
         color: cfg.value.color,
         onOpen: () => {
-          showFurnaceHint.value = false
-          furnaceInteractive.value = false
           stopFurnaceRevealAudio()
           playSound(furnaceReleaseAudio)
           playSound(furnaceLiftAudio)
@@ -694,14 +716,11 @@ function closeFurnace() {
         },
         onDone: () => {
           edgeOn.value = false
-          furnaceInteractive.value = false
           furnaceRumbling.value = false
           playSound(resultRevealAudio)
           showResultView()
         },
       })
-      furnaceInteractive.value = true
-      showFurnaceHint.value = true
     },
   })
 }
@@ -720,8 +739,6 @@ function resetAll() {
   showStampHint.value = false
   contract?.stop()
   // 熔炉回到打开待机态
-  showFurnaceHint.value = false
-  furnaceInteractive.value = false
   furnace?.showOpen()
   edgeOn.value = false
   running.value = false
@@ -770,6 +787,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   clearTimeout(toastTimer)
+  clearTimeout(inventoryRefreshTimer)
   clearTimeout(pageImpactTimer)
   cancelAnimationFrame(pageImpactFrame)
   stopFurnaceRevealAudio()
@@ -791,7 +809,7 @@ onBeforeUnmount(() => {
       <!-- 常驻 3D 熔炉铺满视口，与页面背景图融为一体 -->
       <canvas
         class="furnace-layer"
-        :class="{ interactive: furnaceInteractive, dimmed: showResult }"
+        :class="{ dimmed: showResult }"
         ref="furnaceRef"
       ></canvas>
       <div class="top">
@@ -804,15 +822,13 @@ onBeforeUnmount(() => {
         <section class="stage" :class="{ shake: stageShake }" ref="stageRef">
           <div class="stage-head">
             <div>
-              <div class="eyebrow">TRADE UP CONTRACT</div>
-              <div class="title">汰换合同</div>
-              <div class="subtitle">
-                严格遵循 CS2 汰换规则：10 件同品质随机产出高一档皮肤，盈亏由产物价值决定
+              <div class="title-line">
+                <span class="contract-mark" aria-hidden="true"><span></span></span>
+                <div class="title">汰换合同</div>
               </div>
-            </div>
-            <div class="status-pill">
-              <strong>{{ countText }}</strong
-              ><span>{{ statusText }}</span>
+              <div class="subtitle">
+                使用同品质道具合成更高一级品质的 1 件道具
+              </div>
             </div>
           </div>
 
@@ -821,17 +837,36 @@ onBeforeUnmount(() => {
             <Transition appear name="builder-left">
             <section v-show="showBuilder" class="inv-panel panel-box">
               <div class="inv-head">
-                <div class="inv-title">
-                  <b>{{ eligibleCount }}</b
-                  ><span>件物品符合汰换资格</span>
-                </div>
-                <div class="inv-sub">
-                  拖拽同一品质材料汰换升级：普通~保密级需 10 件、隐秘级需 5 件
+                <div class="inv-title-row">
+                  <div class="inv-title">
+                    <span>可用库存</span>
+                    <b>{{ eligibleCount }}</b>
+                    <small>件</small>
+                    <button
+                      class="refresh-btn"
+                      :class="{ refreshing: inventoryRefreshing }"
+                      type="button"
+                      aria-label="刷新可用库存"
+                      title="刷新可用库存"
+                      @click="refreshInventory"
+                    >
+                      <span aria-hidden="true">↻</span>
+                    </button>
+                  </div>
+                  <label class="quality-select">
+                    <span class="sr-only">按品质筛选</span>
+                    <select v-model="rarityFilter" aria-label="按品质筛选库存">
+                      <option value="all">全部品质</option>
+                      <option v-for="key in FILTER_RARITIES" :key="key" :value="key">
+                        {{ RARITIES[key].name }}
+                      </option>
+                    </select>
+                  </label>
                 </div>
               </div>
               <div class="inv-list">
                 <div
-                  v-for="m in available"
+                  v-for="m in filteredAvailable"
                   :key="m[5]"
                   class="inv-item"
                   :class="{ locked: !canAdd(m) }"
@@ -840,26 +875,23 @@ onBeforeUnmount(() => {
                   @dragstart="onDragStart(m)"
                   @dragend="dragItem = null"
                 >
-                  <span v-if="canAdd(m)" class="add-hint">⠿ 拖拽</span>
+                  <span v-if="canAdd(m)" class="add-hint">拖拽</span>
                   <span v-else class="lock-tag">{{ lockReason(m) }}</span>
+                  <div class="weapon-thumb">
+                    <img :src="GENERIC_WEAPON_URL" alt="" aria-hidden="true" draggable="false" />
+                  </div>
                   <div class="code">{{ m[0] }}</div>
-                  <div class="nm">{{ m[1] }}</div>
+                  <div class="nm">{{ skinName(m) }}</div>
                   <div class="meta">
                     <span class="rarity" :style="{ color: wearFor(m).color }">{{
                       wearFor(m).name
                     }}</span>
-                    <span class="fl">{{ m[3] }}</span>
+                    <span class="fl" :title="`Float ${m[3]}`">{{ m[3] }}</span>
                   </div>
                 </div>
-                <div v-if="!available.length" class="inv-empty">
-                  材料已全部加入汰换栏
+                <div v-if="!filteredAvailable.length" class="inv-empty">
+                  {{ rarityFilter === 'all' ? '材料已全部加入汰换栏' : '当前品质暂无可用物品' }}
                 </div>
-              </div>
-              <div class="inv-actions">
-                <n-button block secondary @click="resetSelected">重置</n-button>
-                <n-button block type="primary" @click="autoFill">
-                  一键添加{{ activeRarity ? `（${RARITIES[activeRarity].name}）` : '' }}
-                </n-button>
               </div>
             </section>
             </Transition>
@@ -871,6 +903,16 @@ onBeforeUnmount(() => {
               @after-leave="onBuilderLeaveComplete"
             >
             <section v-show="showBuilder" class="contract-panel panel-box">
+              <div class="contract-head">汰换合同</div>
+              <div class="contract-summary">
+                <div class="contract-count">
+                  <strong>{{ selected.length }}</strong>
+                  <span>/</span>
+                  <b>{{ activeRarity ? currentNeed : 10 }}</b>
+                </div>
+                <div class="selected-count">已选择 {{ selected.length }} 件</div>
+                <div class="contract-guide">{{ contractGuideText }}</div>
+              </div>
               <div
                 class="contract-drop"
                 :class="{ drag: dropActive }"
@@ -879,11 +921,9 @@ onBeforeUnmount(() => {
                 @drop="onDrop"
               >
                 <div v-if="!selected.length" class="contract-placeholder">
-                  <div class="ph-icon">◈</div>
-                  <div class="big">选择材料以汰换更高品质物品</div>
-                  <div class="small">
-                    从左侧拖入相同品质材料（普通~保密级 10 件 / 隐秘级 5 件）
-                  </div>
+                  <div class="ph-icon" aria-hidden="true"><span></span><span></span></div>
+                  <div class="big">从左侧库存中选择道具</div>
+                  <div class="small">或将道具拖入此处</div>
                 </div>
                 <div v-else class="contract-grid">
                   <div
@@ -895,8 +935,11 @@ onBeforeUnmount(() => {
                     @click="removeItem(m)"
                   >
                     <span class="rm">✕</span>
+                    <div class="weapon-thumb">
+                      <img :src="GENERIC_WEAPON_URL" alt="" aria-hidden="true" draggable="false" />
+                    </div>
                     <div class="code">{{ m[0] }}</div>
-                    <div class="nm">{{ m[1] }}</div>
+                    <div class="nm">{{ skinName(m) }}</div>
                     <div class="meta">
                       <span class="rarity" :style="{ color: wearFor(m).color }">{{
                         wearFor(m).name
@@ -913,22 +956,35 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
               </div>
+              <div class="expected-outcome">
+                <span>预计获得：</span><strong>{{ expectedOutcomeText }}</strong>
+              </div>
               <div class="contract-footer">
-                <n-checkbox
-                  v-model:checked="confirmChecked"
-                  :disabled="!canConfirmItems"
-                >
-                  确认汰换物品
-                </n-checkbox>
-                <n-button
-                  type="primary"
-                  size="large"
-                  class="confirm-btn"
-                  :disabled="!confirmChecked"
-                  @click="startCraft"
-                >
-                  确认汰换
-                </n-button>
+                <div class="contract-tools">
+                  <n-button secondary class="tool-btn" @click="resetSelected">
+                    <span class="button-icon" aria-hidden="true">↻</span>重置合同
+                  </n-button>
+                  <n-button secondary class="tool-btn" @click="autoFill">
+                    <span class="button-icon check-icon" aria-hidden="true">✓</span>自动选择
+                  </n-button>
+                </div>
+                <div class="confirm-tools">
+                  <n-checkbox
+                    v-model:checked="confirmChecked"
+                    :disabled="!canConfirmItems"
+                  >
+                    确认物品
+                  </n-checkbox>
+                  <n-button
+                    type="primary"
+                    size="large"
+                    class="confirm-btn"
+                    :disabled="!confirmChecked"
+                    @click="startCraft"
+                  >
+                    确认汰换
+                  </n-button>
+                </div>
               </div>
             </section>
             </Transition>
@@ -944,8 +1000,9 @@ onBeforeUnmount(() => {
                 :style="{ '--c': m[2] }"
                 :ref="(el) => setCardEl(el, i)"
               >
+                <img :src="GENERIC_WEAPON_URL" alt="" aria-hidden="true" draggable="false" />
                 <b>{{ m[0] }}</b>
-                <span>{{ m[1] }}</span>
+                <span>{{ skinName(m) }}</span>
               </div>
             </div>
           </div>
@@ -968,12 +1025,6 @@ onBeforeUnmount(() => {
             <span class="stamp-ring"></span>
             <span class="stamp-text">点击此处<br />盖章</span>
           </button>
-
-          <!-- 「点击熔炉开启」提示：熔炉合上后显示，引导用户点击炉体 -->
-          <div class="furnace-hint" :class="{ show: showFurnaceHint }">
-            <span class="fh-arrow">▲</span>
-            <span class="fh-text">点击熔炉开启汰换</span>
-          </div>
 
           <div class="flash" :class="{ boom: flashBoom }"></div>
           <div
@@ -1062,47 +1113,9 @@ onBeforeUnmount(() => {
   pointer-events: none;
   transition: opacity 0.35s ease, filter 0.35s ease;
 }
-/* closed 态开放点击（Raycaster 命中炉体才开启） */
-.furnace-layer.interactive {
-  pointer-events: auto;
-  z-index: 4;
-}
 .furnace-layer.dimmed {
   opacity: 0.16;
   filter: brightness(0.55) saturate(0.55);
-}
-
-/* 「点击熔炉开启」提示 */
-.furnace-hint {
-  position: absolute;
-  left: 50%;
-  top: 62%;
-  transform: translate(-50%, 0);
-  z-index: 6;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  color: #ffd9a0;
-  font-size: 16px;
-  font-weight: 900;
-  letter-spacing: 0.1em;
-  text-shadow: 0 0 16px rgba(255, 140, 50, 0.7);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 0.4s ease;
-}
-.furnace-hint.show {
-  opacity: 1;
-  animation: furnaceHintFloat 1.6s ease-in-out infinite;
-}
-.furnace-hint .fh-arrow {
-  font-size: 22px;
-  color: #ffcf28;
-}
-@keyframes furnaceHintFloat {
-  0%, 100% { transform: translate(-50%, 0); }
-  50% { transform: translate(-50%, -8px); }
 }
 
 /* 右上角：切换汰换动效 */
@@ -1242,13 +1255,72 @@ onBeforeUnmount(() => {
   }
 }
 
-/* ===== 汰换构建区：左右两栏 ===== */
+/* ===== 参考图工业控制台视觉；双栏宽度定义保持不变 ===== */
+.top {
+  height: 62px;
+  padding: 0 28px;
+  border-bottom-color: rgba(162, 174, 180, 0.16);
+  background: rgba(2, 5, 7, 0.78);
+  backdrop-filter: blur(10px);
+}
+.brand {
+  color: #c8ff00;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+.brand span {
+  margin-left: 14px;
+  color: #f1f3f4;
+  font-size: 14px;
+}
+.layout {
+  padding-top: 18px;
+}
+.stage-head {
+  padding: 26px 30px 14px;
+}
+.title-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.contract-mark {
+  position: relative;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 25px;
+  border: 3px solid #ffc928;
+  transform: rotate(45deg);
+}
+.contract-mark::before,
+.contract-mark span {
+  content: '';
+  position: absolute;
+  inset: 5px;
+  border: 2px solid #ffc928;
+}
+.contract-mark span {
+  inset: 11px -4px -4px 11px;
+  border-left: 0;
+  border-top: 0;
+}
+.title {
+  margin: 0;
+  color: #f4f6f7;
+  font: 800 34px/1.05 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  letter-spacing: 0;
+}
+.subtitle {
+  margin-top: 8px;
+  color: #b4bbc0;
+  font-size: 13px;
+}
+
 .builder {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.02fr);
   gap: 22px;
   align-items: stretch;
 }
-
 .builder-left-enter-active,
 .builder-right-enter-active {
   transition:
@@ -1279,340 +1351,512 @@ onBeforeUnmount(() => {
 }
 
 .panel-box {
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 16px;
-  background: rgba(4, 8, 18, 0.66);
-  backdrop-filter: blur(12px);
-  padding: 16px;
+  height: 656px;
+  min-height: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #5b6266;
+  border-radius: 3px;
+  background: rgba(8, 13, 16, 0.92);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.7),
+    0 14px 38px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(7px);
 }
 
-/* 左：材料池 */
-.inv-title {
+/* 左侧库存 */
+.inv-head {
+  flex: 0 0 46px;
+  padding: 0 12px;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  border-bottom: 1px solid #30383c;
+  background: rgba(20, 25, 28, 0.96);
 }
-.inv-title b {
-  font: 900 26px Impact, 'Arial Black', sans-serif;
-  color: #ffcf28;
-  text-shadow: 0 0 18px rgba(255, 207, 40, 0.35);
+.inv-title-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.inv-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #f0f2f3;
+  white-space: nowrap;
 }
 .inv-title span {
   font-size: 14px;
   font-weight: 800;
-  color: #dbeafe;
-  letter-spacing: 0.02em;
 }
-.inv-sub {
+.inv-title b,
+.inv-title small {
+  color: #c5cbd0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.refresh-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: #8d979c;
+  font: 400 19px/1 sans-serif;
+  cursor: pointer;
+}
+.refresh-btn:hover,
+.refresh-btn:focus-visible {
+  color: #ffc928;
+  outline: 1px solid #555f64;
+  outline-offset: -3px;
+}
+.refresh-btn.refreshing span {
+  display: inline-block;
+  animation: inventoryRefresh 0.52s cubic-bezier(0.3, 0.8, 0.3, 1);
+}
+@keyframes inventoryRefresh {
+  to { transform: rotate(360deg); }
+}
+.quality-select {
+  position: relative;
+  flex: 0 0 auto;
+}
+.quality-select select {
+  width: 112px;
+  height: 30px;
+  padding: 0 28px 0 10px;
+  border: 1px solid #596267;
+  border-radius: 2px;
+  background: #0d1215;
+  color: #dce0e2;
   font-size: 12px;
-  color: #64748b;
-  margin-top: 5px;
-  line-height: 1.5;
+  cursor: pointer;
 }
-
+.quality-select select:focus-visible {
+  border-color: #ffc928;
+  outline: 1px solid rgba(255, 201, 40, 0.45);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 .inv-list {
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-rows: max-content;
-  gap: 10px;
-  max-height: 520px;
+  flex: 1;
   min-height: 0;
-  overflow-y: auto;
-  padding: 8px 4px 0 0;
+  margin: 0;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-auto-rows: 127px;
+  gap: 6px;
   align-content: start;
+  overflow-y: auto;
 }
-.inv-list::-webkit-scrollbar {
+.inv-list::-webkit-scrollbar,
+.contract-grid::-webkit-scrollbar {
   width: 6px;
 }
-.inv-list::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
-  border-radius: 3px;
+.inv-list::-webkit-scrollbar-track,
+.contract-grid::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.025);
 }
-
-.inv-item {
+.inv-list::-webkit-scrollbar-thumb,
+.contract-grid::-webkit-scrollbar-thumb {
+  border-radius: 0;
+  background: #3c454a;
+}
+.inv-item,
+.contract-item {
   position: relative;
-  min-height: 92px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-  background: linear-gradient(180deg, rgba(37, 43, 64, 0.9), rgba(18, 23, 36, 0.96));
-  padding: 12px 12px 15px;
-  cursor: grab;
+  min-width: 0;
+  min-height: 0;
+  height: 127px;
+  padding: 7px 7px 7px 10px;
   overflow: hidden;
+  border: 1px solid #2d373c;
+  border-radius: 2px;
+  background: linear-gradient(180deg, rgba(26, 34, 38, 0.98), rgba(14, 20, 23, 0.98));
   user-select: none;
-  transition: transform 0.16s, border-color 0.16s, box-shadow 0.16s;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
-.inv-item::after {
+.inv-item {
+  cursor: grab;
+}
+.inv-item::after,
+.contract-item::after {
   content: '';
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 4px;
+  inset: 0 auto 0 0;
+  width: 3px;
+  height: auto;
   background: var(--c);
-  box-shadow: 0 0 12px var(--c);
+  box-shadow: none;
 }
 .inv-item:hover {
-  border-color: rgba(255, 207, 40, 0.5);
-  transform: translateY(-2px);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
+  border-color: rgba(255, 201, 40, 0.62);
+  background: linear-gradient(180deg, rgba(35, 43, 47, 0.98), rgba(17, 24, 27, 0.98));
+  transform: none;
+  box-shadow: none;
 }
 .inv-item:active {
   cursor: grabbing;
 }
-.inv-item .code {
-  font: 900 20px Impact, 'Arial Black', sans-serif;
-  letter-spacing: 0.03em;
-  text-shadow: 0 0 14px var(--c);
-}
-.inv-item .nm {
-  font-size: 12px;
-  color: #cbd5e1;
-  margin-top: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.inv-item .meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  margin-top: 8px;
-}
-.inv-item .rarity {
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.inv-item .fl {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: #64748b;
-  font-variant-numeric: tabular-nums;
-}
-.inv-item .add-hint {
-  position: absolute;
-  top: 9px;
-  right: 10px;
-  font-size: 10px;
-  font-weight: 800;
-  color: #64748b;
-  opacity: 0;
-  transition: 0.15s;
-}
-.inv-item:hover .add-hint {
-  opacity: 1;
-  color: #ffcf28;
-}
-/* 不可添加：非凡级(金)、品质不符或已满 */
-.inv-item.locked {
-  opacity: 0.42;
-  cursor: not-allowed;
-  filter: grayscale(0.35);
-}
-.inv-item.locked:hover {
-  transform: none;
-  border-color: rgba(255, 255, 255, 0.1);
-  box-shadow: none;
-}
-.inv-item .lock-tag {
-  position: absolute;
-  top: 8px;
-  right: 9px;
-  font-size: 10px;
-  font-weight: 800;
-  color: #0b0e16;
-  background: rgba(255, 255, 255, 0.6);
-  border-radius: 5px;
-  padding: 2px 6px;
-}
-.inv-empty {
-  grid-column: 1 / -1;
-  text-align: center;
-  color: rgba(255, 255, 255, 0.4);
-  font-size: 13px;
-  padding: 40px 0;
-}
-
-.inv-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-top: 16px;
-}
-
-/* 右：汰换合同栏 */
-.contract-drop {
-  flex: 1;
-  min-height: 380px;
-  border: 1.5px dashed rgba(255, 255, 255, 0.16);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.02);
-  padding: 14px;
-  transition: 0.18s;
-  display: flex;
-  flex-direction: column;
-}
-.contract-drop.drag {
-  border-color: #ffcf28;
-  background: rgba(255, 207, 40, 0.06);
-  box-shadow: inset 0 0 40px rgba(255, 207, 40, 0.12);
-}
-
-.contract-placeholder {
-  margin: auto;
-  text-align: center;
-  color: rgba(255, 255, 255, 0.42);
-  padding: 20px;
-}
-.contract-placeholder .ph-icon {
-  font-size: 42px;
-  color: rgba(255, 207, 40, 0.55);
-  text-shadow: 0 0 24px rgba(255, 207, 40, 0.4);
-}
-.contract-placeholder .big {
-  font-size: 16px;
-  font-weight: 800;
-  color: rgba(255, 255, 255, 0.62);
-  margin-top: 14px;
-}
-.contract-placeholder .small {
-  font-size: 12px;
-  margin-top: 10px;
-  color: #64748b;
-}
-
-.contract-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  grid-auto-rows: max-content;
-  gap: 10px;
-  align-content: start;
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 8px 4px 0 0;
-}
-/* 右侧选中项与左侧材料卡保持完全一致的样式 */
-.contract-item {
-  position: relative;
-  min-height: 92px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 10px;
-  background: linear-gradient(180deg, rgba(37, 43, 64, 0.9), rgba(18, 23, 36, 0.96));
-  padding: 12px 12px 15px;
-  overflow: hidden;
-  cursor: pointer;
-  transition: transform 0.16s, border-color 0.16s, box-shadow 0.16s;
-}
-.contract-item::after {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 4px;
-  background: var(--c);
-  box-shadow: 0 0 12px var(--c);
-}
-.contract-item:hover {
-  border-color: rgba(255, 107, 107, 0.5);
-  transform: translateY(-2px);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.42);
-}
-.contract-item .code {
-  font: 900 20px Impact, 'Arial Black', sans-serif;
-  letter-spacing: 0.03em;
-  text-shadow: 0 0 14px var(--c);
-}
-.contract-item .nm {
-  font-size: 12px;
-  color: #cbd5e1;
-  margin-top: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.contract-item .meta {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  margin-top: 8px;
-}
-.contract-item .rarity {
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.contract-item .fl {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: #64748b;
-  font-variant-numeric: tabular-nums;
-}
-.contract-item .rm {
-  position: absolute;
-  top: 9px;
-  right: 10px;
-  font-size: 12px;
-  font-weight: 900;
-  color: rgba(255, 255, 255, 0.55);
-  opacity: 0;
-  transition: 0.15s;
-}
-.contract-item:hover .rm {
-  opacity: 1;
-  color: #ff6b6b;
-}
-.contract-item.empty {
+.weapon-thumb {
+  width: 100%;
+  height: 54px;
   display: flex;
   align-items: center;
   justify-content: center;
+  pointer-events: none;
+}
+.weapon-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 1;
+  filter: brightness(1.35) saturate(0.78);
+}
+.inv-item .code,
+.contract-item .code {
+  overflow: hidden;
+  color: #eef1f2;
+  font: 800 11px/15px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0;
+  text-shadow: none;
+}
+.inv-item .nm,
+.contract-item .nm {
+  margin-top: 1px;
+  overflow: hidden;
+  color: #b7bec2;
+  font-size: 10px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.inv-item .meta,
+.contract-item .meta {
+  min-width: 0;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+.inv-item .rarity,
+.contract-item .rarity {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0;
+}
+.inv-item .fl,
+.contract-item .fl {
+  display: none;
+}
+.inv-item .add-hint,
+.inv-item .lock-tag,
+.contract-item .rm {
+  position: absolute;
+  z-index: 2;
+  top: 5px;
+  right: 5px;
+  padding: 2px 4px;
+  border-radius: 1px;
+  background: rgba(7, 11, 13, 0.84);
+  color: #a2abb0;
+  font-size: 8px;
+  font-weight: 700;
+  line-height: 12px;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+.inv-item:hover .add-hint,
+.contract-item:hover .rm {
+  opacity: 1;
+}
+.inv-item .lock-tag {
+  color: #c3c8ca;
+  opacity: 1;
+}
+.inv-item.locked {
+  cursor: not-allowed;
+  filter: grayscale(0.45);
+  opacity: 0.38;
+}
+.inv-item.locked:hover {
+  border-color: #2d373c;
+  background: linear-gradient(180deg, rgba(26, 34, 38, 0.98), rgba(14, 20, 23, 0.98));
+}
+.inv-empty {
+  grid-column: 1 / -1;
+  padding: 42px 0;
+  color: #737d82;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* 右侧合同 */
+.contract-head {
+  flex: 0 0 44px;
+  padding: 0 15px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid #30383c;
+  background: rgba(20, 25, 28, 0.96);
+  color: #f0f2f3;
+  font-size: 14px;
+  font-weight: 800;
+}
+.contract-summary {
+  flex: 0 0 91px;
+  padding: 8px 14px 7px;
+  text-align: center;
+}
+.contract-count {
+  color: #f4f5f5;
+  font-size: 27px;
+  font-weight: 800;
+  line-height: 30px;
+}
+.contract-count strong,
+.contract-count b {
+  font: inherit;
+}
+.contract-count span {
+  margin: 0 7px;
+  color: #8f989d;
+}
+.contract-count b {
+  color: #ffc928;
+}
+.selected-count {
+  color: #c0c5c8;
+  font-size: 11px;
+  line-height: 16px;
+}
+.contract-guide {
+  margin-top: 4px;
+  overflow: hidden;
+  color: #8d969b;
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.contract-drop {
+  flex: 1;
+  min-height: 0;
+  margin: 0 14px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px dashed #596267;
+  border-radius: 2px;
+  background: rgba(5, 9, 11, 0.47);
+  transition: border-color 0.18s ease, background-color 0.18s ease;
+}
+.contract-drop.drag {
+  border-color: #ffc928;
+  background: rgba(255, 201, 40, 0.04);
+  box-shadow: inset 0 0 28px rgba(255, 201, 40, 0.08);
+}
+.contract-placeholder {
+  margin: auto;
+  padding: 18px;
+  color: #6e777c;
+  text-align: center;
+}
+.contract-placeholder .ph-icon {
+  position: relative;
+  width: 58px;
+  height: 46px;
+  margin: 0 auto 14px;
+  opacity: 0.62;
+}
+.contract-placeholder .ph-icon span {
+  position: absolute;
+  left: 15px;
+  width: 28px;
+  height: 28px;
+  border: 3px solid #555d61;
+  transform: rotate(45deg);
+}
+.contract-placeholder .ph-icon span:first-child {
+  top: 1px;
+}
+.contract-placeholder .ph-icon span:last-child {
+  top: 13px;
+  clip-path: inset(0 0 11px 0);
+}
+.contract-placeholder .big {
+  color: #aeb4b7;
+  font-size: 15px;
+  font-weight: 700;
+}
+.contract-placeholder .small {
+  margin-top: 10px;
+  color: #70797e;
+  font-size: 12px;
+}
+.contract-grid {
+  flex: 1;
+  min-height: 0;
+  padding-right: 2px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-auto-rows: 127px;
+  gap: 6px;
+  align-content: start;
+  overflow-y: auto;
+}
+.contract-item {
+  cursor: pointer;
+}
+.contract-item:hover {
+  border-color: rgba(255, 105, 105, 0.64);
+  transform: none;
+  box-shadow: none;
+}
+.contract-item:hover .rm {
+  color: #ff7373;
+}
+.contract-item.empty {
+  height: 127px;
   padding: 0;
-  background: rgba(255, 255, 255, 0.02);
-  border: 1px dashed rgba(255, 255, 255, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed #323b40;
+  background: rgba(255, 255, 255, 0.012);
   cursor: default;
 }
 .contract-item.empty::after {
   display: none;
 }
 .contract-item.empty:hover {
-  transform: none;
-  border-color: rgba(255, 255, 255, 0.14);
-  box-shadow: none;
+  border-color: #323b40;
 }
 .contract-item.empty .slot-idx {
-  font: 900 15px Impact, 'Arial Black', sans-serif;
-  color: rgba(255, 255, 255, 0.22);
+  color: #424b50;
+  font-size: 12px;
+  font-weight: 700;
 }
-
+.expected-outcome {
+  flex: 0 0 41px;
+  margin: 0 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid #293135;
+  color: #a9afb2;
+  font-size: 11px;
+}
+.expected-outcome strong {
+  color: #ffc928;
+  font-weight: 800;
+}
 .contract-footer {
-  margin-top: 16px;
+  flex: 0 0 64px;
+  margin: 0;
+  padding: 10px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  padding-top: 16px;
+  gap: 10px;
+  border-top: 1px solid #30383c;
+  background: rgba(17, 22, 25, 0.96);
+}
+.contract-tools,
+.confirm-tools {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.contract-tools :deep(.n-button),
+.confirm-btn {
+  border-radius: 2px;
+  font-size: 12px;
+}
+.contract-tools :deep(.n-button) {
+  height: 36px;
+  padding: 0 11px;
+}
+.button-icon {
+  margin-right: 7px;
+  color: #c8ced1;
+  font-size: 18px;
+  line-height: 1;
+}
+.check-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid #768086;
+  font-size: 11px;
 }
 .contract-footer :deep(.n-checkbox) {
-  font-weight: 800;
-  --n-font-size: 15px;
+  font-weight: 700;
+  --n-font-size: 12px;
 }
 .confirm-btn {
-  min-width: 168px;
-  letter-spacing: 0.08em;
+  min-width: 142px;
+  height: 42px;
+  letter-spacing: 0;
+  --n-color-disabled: #3a3f42 !important;
+  --n-color-hover-disabled: #3a3f42 !important;
+  --n-color-pressed-disabled: #3a3f42 !important;
+  --n-text-color-disabled: #777d80 !important;
+  --n-border-disabled: 1px solid #444b4f !important;
+}
+
+.process-grid .card img {
+  width: 86%;
+  height: 50px;
+  object-fit: contain;
+}
+.process-grid .card b {
+  margin-top: 4px;
+  font: 800 15px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+.result-card,
+.stat,
+.result-actions button,
+.tag {
+  border-radius: 3px;
+}
+.result-card {
+  border-color: #596267;
+  background: linear-gradient(180deg, rgba(23, 30, 34, 0.96), rgba(7, 12, 15, 0.98));
+}
+
+@media (min-width: 901px) and (max-width: 1200px) {
+  .inv-list,
+  .contract-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 900px) {
@@ -1637,15 +1881,70 @@ onBeforeUnmount(() => {
     height: calc(100vh - 92px);
   }
   .inv-list {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    max-height: 300px;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
   .contract-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .top {
+    height: 58px;
+    padding: 0 16px;
+  }
+  .brand {
+    font-size: 14px;
+  }
+  .brand span {
+    margin-left: 8px;
+    font-size: 12px;
+  }
+  .stage-head {
+    padding: 20px 16px 12px;
+  }
+  .title {
+    font-size: 28px;
+  }
+  .contract-mark {
+    width: 21px;
+    height: 21px;
+    flex-basis: 21px;
+  }
+  .panel-box {
+    height: 640px;
+  }
+  .inv-title-row {
+    gap: 8px;
+  }
+  .quality-select select {
+    width: 104px;
+  }
+  .inv-list,
+  .contract-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .contract-footer {
+    flex-basis: 108px;
+    flex-wrap: wrap;
+  }
+  .contract-tools,
+  .confirm-tools {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .contract-tools :deep(.n-button) {
+    flex: 1;
+  }
+  .confirm-btn {
+    min-width: 142px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .refresh-btn.refreshing span {
+    animation: none;
+  }
   .builder-left-enter-active,
   .builder-right-enter-active,
   .builder-left-leave-active,

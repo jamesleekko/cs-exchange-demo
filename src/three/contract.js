@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 
 // 「合同签订」确认汰换特效：
-// 一份汰换合同自上方飞入并展开 → 逐条列出选中材料（名称用对应品质色）→
+// 一份汰换合同自下方抽出并展开 → 逐条列出选中材料（名称用对应品质色）→
 // 右下角一支黑色签字笔画出一个「勾」→ 合同盖章并向上抽离 → onDone 切结果。
 // createContract(canvas) 返回句柄，play(opts) 播放一次完整序列，回调驱动外部（音效、结果视图）。
 //
@@ -423,11 +423,11 @@ export function createContract(canvas) {
   function updatePaper() {
     let px = 0, py = 0, pz = 0, rotX = 0, rotZ = 0, scale = 1, op = 1
     if (t < T.flyEnd) {
-      // 自上方偏转飞入
+      // 自下方偏转抽出
       const p = easeOut(smooth(T.flyIn, T.flyEnd, t))
-      py = lerp(9, 0, p)
+      py = lerp(-9, 0, p)
       pz = lerp(-6, 0, p)
-      rotX = lerp(-1.1, 0, p)
+      rotX = lerp(1.1, 0, p)
       rotZ = lerp(0.5, 0, p)
       scale = lerp(0.6, 1, p)
       op = clamp01(p * 2)

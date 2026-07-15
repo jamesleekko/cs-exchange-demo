@@ -25,6 +25,7 @@ const CAMERA_HEIGHT = 5.05
 const CAMERA_TARGET_Y = 3.65
 const CAMERA_DOLLY = 2.3
 const DEFAULT_GLOW = '#ff7928'
+const ARM_GLOW = '#45bfff'
 const MOUTH = new THREE.Vector3(0, 1.72, 0)
 const SEAM_Y = 1.68
 const UPPER_OPEN_OFFSET = 0.62
@@ -264,6 +265,13 @@ export function createFurnace(canvas) {
       metalness: 0.25,
       roughness: 0.32,
     })),
+    armGlow: track(new THREE.MeshStandardMaterial({
+      color: 0x0a2842,
+      emissive: new THREE.Color(ARM_GLOW),
+      emissiveIntensity: 3.2,
+      metalness: 0.22,
+      roughness: 0.28,
+    })),
     hot: track(new THREE.MeshStandardMaterial({
       color: 0x5b1e09,
       emissive: new THREE.Color(0xffa044),
@@ -357,6 +365,11 @@ export function createFurnace(canvas) {
     if (objectName.startsWith('Energy_Beam_Ribbon')) return modelMaterials.beamRibbon
     if (objectName.startsWith('Energy_Beam_Aura')) return modelMaterials.beamAura
     if (objectName.startsWith('Energy_Beam')) return modelMaterials.beam
+    if (
+      objectName.startsWith('Arm_')
+      && (objectName.includes('GlowRing') || objectName.includes('LinkGlow'))
+    ) return modelMaterials.armGlow
+    if (name.startsWith('M_ArmBlueGlow')) return modelMaterials.armGlow
     if (name.startsWith('M_DarkSteel')) return modelMaterials.dark
     if (name.startsWith('M_BrushedSteel')) return modelMaterials.steel
     if (name.startsWith('M_ArmorPanel')) return modelMaterials.panel
@@ -821,6 +834,7 @@ export function createFurnace(canvas) {
   let phaseTime = 0
   let elapsed = 0
   let callbacks = {}
+  let openRequested = false
   let press = 0
   let shake = 0
   let flash = 0
@@ -982,13 +996,21 @@ export function createFurnace(canvas) {
     return raycaster.intersectObjects(pickRoots, true).length > 0
   }
 
-  function onPointerDown(event) {
-    if (phase !== 'closed' || !running || !pickFurnace(event)) return
+  function beginOpening() {
+    if (phase !== 'closed') return false
+    openRequested = false
     phase = 'opening'
     phaseTime = 0
     canvas.style.cursor = 'default'
     Object.keys(fired).forEach((key) => delete fired[key])
     callbacks.onOpen?.()
+    ensureLoop()
+    return true
+  }
+
+  function onPointerDown(event) {
+    if (phase !== 'closed' || !running || !pickFurnace(event)) return
+    beginOpening()
   }
 
   function onPointerMove(event) {
@@ -1060,6 +1082,7 @@ export function createFurnace(canvas) {
       phase = 'closed'
       phaseTime = 0
       callbacks.onClosed?.()
+      if (openRequested) beginOpening()
     }
   }
 
@@ -1394,6 +1417,7 @@ export function createFurnace(canvas) {
   }
 
   function showOpen() {
+    openRequested = false
     phase = 'idle'
     phaseTime = 0
     press = 0
@@ -1410,6 +1434,7 @@ export function createFurnace(canvas) {
   }
 
   function close(options = {}) {
+    openRequested = false
     resetRevealFx()
     callbacks = { ...options }
     phase = 'closing'
@@ -1429,6 +1454,14 @@ export function createFurnace(canvas) {
       phaseTime = 0
     }
     ensureLoop()
+  }
+
+  function open() {
+    if (phase === 'closing') {
+      openRequested = true
+      return true
+    }
+    return beginOpening()
   }
 
   function stop() {
@@ -1460,6 +1493,7 @@ export function createFurnace(canvas) {
     showOpen,
     close,
     armReveal,
+    open,
     setRarity,
     stop,
     resize,
