@@ -40,6 +40,7 @@ const RARITY_ORDER = [
   'gold',
 ]
 
+const BRAND_LOGO_URL = `${import.meta.env.BASE_URL}yuanyoumao-logo.png`
 const GENERIC_WEAPON_URL = `${import.meta.env.BASE_URL}weapons/generic-weapon.png`
 const FILTER_RARITIES = RARITY_ORDER.filter((key) => RARITIES[key].need > 0)
 
@@ -835,7 +836,9 @@ onBeforeUnmount(() => {
       ></canvas>
       <div class="furnace-base-shadow" aria-hidden="true"></div>
       <div class="top">
-        <div class="brand">元游猫 <span>汰换合同交互原型</span></div>
+        <div class="brand">
+          <img class="brand-logo" :src="BRAND_LOGO_URL" alt="元游猫" />
+        </div>
         <div class="top-actions">
           <!-- 动效模式切换已移除，现在使用统一流程 -->
         </div>
@@ -1410,9 +1413,16 @@ onBeforeUnmount(() => {
   backdrop-filter: blur(10px);
 }
 .brand {
+  display: flex;
+  align-items: center;
   color: #c8ff00;
   font-size: 15px;
   letter-spacing: 0;
+}
+.brand-logo {
+  display: block;
+  width: auto;
+  height: 38px;
 }
 .brand span {
   margin-left: 14px;
@@ -2045,6 +2055,9 @@ onBeforeUnmount(() => {
   }
   .brand {
     font-size: 14px;
+  }
+  .brand-logo {
+    height: 32px;
   }
   .brand span {
     margin-left: 8px;
