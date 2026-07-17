@@ -275,6 +275,7 @@ const cardEls = []
 
 const flashBoom = ref(false)
 const furnaceWhiteout = ref(false)
+const furnaceWhiteoutColor = ref(PLACEHOLDER_OUTCOME.color)
 const edgeOn = ref(false)
 const edgeColor = ref('#ffcf28')
 const stageShake = ref(false)
@@ -381,6 +382,9 @@ function releaseFurnaceWhiteout() {
 }
 
 const cfg = computed(() => currentOutcome.value)
+const furnaceWhiteoutStyle = computed(() => ({
+  '--whiteout-color': furnaceWhiteoutColor.value,
+}))
 
 const available = computed(() =>
   inventory.filter(
@@ -729,6 +733,7 @@ function lowerFurnace() {
           stopSound(energyChargeAudio)
         },
         onClimax: () => {
+          furnaceWhiteoutColor.value = cfg.value.color
           furnaceWhiteout.value = true
           playSound(energyClimaxAudio)
           triggerPageImpact(520)
@@ -1109,6 +1114,7 @@ onBeforeUnmount(() => {
       <div
         class="furnace-whiteout"
         :class="{ active: furnaceWhiteout }"
+        :style="furnaceWhiteoutStyle"
         aria-hidden="true"
       ></div>
     </Teleport>
@@ -1188,6 +1194,8 @@ onBeforeUnmount(() => {
 }
 
 .furnace-whiteout {
+  --whiteout-color: #ffcf28;
+
   position: fixed;
   inset: 0;
   z-index: 80;
@@ -1212,9 +1220,10 @@ onBeforeUnmount(() => {
   background: radial-gradient(
     circle,
     #fff 0%,
-    rgba(255, 255, 255, 0.98) 24%,
-    rgba(255, 242, 214, 0.72) 48%,
-    transparent 72%
+    #fff 18%,
+    color-mix(in oklab, #fff 76%, var(--whiteout-color)) 44%,
+    color-mix(in oklab, var(--whiteout-color) 42%, transparent) 64%,
+    transparent 76%
   );
   filter: blur(10px);
   opacity: 0;
@@ -1224,7 +1233,15 @@ onBeforeUnmount(() => {
 }
 .furnace-whiteout::after {
   inset: 0;
-  background: #fff;
+  background-color: #fff;
+  background-color: color-mix(in oklab, #fff 88%, var(--whiteout-color));
+  background-image: radial-gradient(
+    circle at 50% 54%,
+    #fff 0%,
+    rgba(255, 255, 255, 0.98) 18%,
+    rgba(255, 255, 255, 0.62) 48%,
+    transparent 78%
+  );
   opacity: 0;
   transition: opacity 0.3s ease-out;
   will-change: opacity;

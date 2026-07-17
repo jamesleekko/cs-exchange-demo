@@ -78,6 +78,7 @@ async function runCase({ name, viewport }) {
   const page = await browser.newPage({ viewport, deviceScaleFactor: 1 })
   const pageErrors = []
   const consoleErrors = []
+  let whiteoutQualityColor = ''
 
   page.on('pageerror', (error) => pageErrors.push(error.message))
   page.on('console', (message) => {
@@ -131,6 +132,19 @@ async function runCase({ name, viewport }) {
   await setFurnaceTimeScale(page, 1)
 
   await page.waitForSelector('.furnace-whiteout.active', { timeout: 10000 })
+  const whiteoutAppearance = await page.locator('.furnace-whiteout').evaluate((element) => ({
+    qualityColor: getComputedStyle(element).getPropertyValue('--whiteout-color')
+      .trim()
+      .toLowerCase(),
+    veilColor: getComputedStyle(element, '::after').backgroundColor,
+  }))
+  whiteoutQualityColor = whiteoutAppearance.qualityColor
+  if (
+    !/^#[0-9a-f]{6}$/.test(whiteoutQualityColor)
+    || whiteoutAppearance.veilColor === 'rgb(255, 255, 255)'
+  ) {
+    throw new Error(`${name}: 品质白场颜色异常 ${JSON.stringify(whiteoutAppearance)}`)
+  }
   await setFurnaceTimeScale(page, 0)
   const whiteoutAnimationCount = await setWhiteoutTime(page, 80)
   if (!whiteoutAnimationCount) throw new Error(`${name}: 未找到白场动画`)
@@ -148,6 +162,14 @@ async function runCase({ name, viewport }) {
 
   await page.waitForSelector('.result.show', { timeout: 12000 })
   await page.waitForTimeout(450)
+  const resultQualityColor = await page.locator('.result-card').evaluate((element) => (
+    getComputedStyle(element).getPropertyValue('--c').trim().toLowerCase()
+  ))
+  if (resultQualityColor !== whiteoutQualityColor) {
+    throw new Error(
+      `${name}: 白场颜色 ${whiteoutQualityColor} 与结果颜色 ${resultQualityColor} 不一致`,
+    )
+  }
   await page.screenshot({ path: `/tmp/furnace-fx-${name}-result.png` })
 
   if (await page.locator('.furnace-hint').count()) {
