@@ -273,6 +273,7 @@ const craftCards = ref([])
 const cardEls = []
 
 const flashBoom = ref(false)
+const furnaceWhiteout = ref(false)
 const edgeOn = ref(false)
 const edgeColor = ref('#ffcf28')
 const stageShake = ref(false)
@@ -281,6 +282,7 @@ const furnaceRumbling = ref(false)
 const pageImpactDuration = ref(480)
 let pageImpactTimer = null
 let pageImpactFrame = 0
+let whiteoutReleaseFrame = 0
 
 const toastMsg = ref('')
 const toastShow = ref(false)
@@ -358,6 +360,22 @@ function triggerPageImpact(duration = 480) {
   pageImpactFrame = requestAnimationFrame(() => {
     pageImpact.value = true
     pageImpactTimer = setTimeout(() => (pageImpact.value = false), duration)
+  })
+}
+
+function resetFurnaceWhiteout() {
+  cancelAnimationFrame(whiteoutReleaseFrame)
+  whiteoutReleaseFrame = 0
+  furnaceWhiteout.value = false
+}
+
+function releaseFurnaceWhiteout() {
+  cancelAnimationFrame(whiteoutReleaseFrame)
+  whiteoutReleaseFrame = requestAnimationFrame(() => {
+    whiteoutReleaseFrame = requestAnimationFrame(() => {
+      furnaceWhiteout.value = false
+      whiteoutReleaseFrame = 0
+    })
   })
 }
 
@@ -675,6 +693,7 @@ function clickStampHint() {
 // 材料确认后：熔炉上部下降合拢，同时准备后续自动揭晓。
 function lowerFurnace() {
   if (!furnace) return
+  resetFurnaceWhiteout()
   furnaceRumbling.value = false
   edgeOn.value = false
   furnace.close({
@@ -709,16 +728,16 @@ function lowerFurnace() {
           stopSound(energyChargeAudio)
         },
         onClimax: () => {
-          flashBoom.value = true
+          furnaceWhiteout.value = true
           playSound(energyClimaxAudio)
           triggerPageImpact(520)
-          setTimeout(() => (flashBoom.value = false), 460)
         },
         onDone: () => {
           edgeOn.value = false
           furnaceRumbling.value = false
           playSound(resultRevealAudio)
           showResultView()
+          releaseFurnaceWhiteout()
         },
       })
     },
@@ -728,6 +747,7 @@ function lowerFurnace() {
 function resetAll() {
   clearTimeout(pageImpactTimer)
   cancelAnimationFrame(pageImpactFrame)
+  resetFurnaceWhiteout()
   pageImpact.value = false
   furnaceRumbling.value = false
   stopFurnaceRevealAudio()
@@ -790,6 +810,7 @@ onBeforeUnmount(() => {
   clearTimeout(inventoryRefreshTimer)
   clearTimeout(pageImpactTimer)
   cancelAnimationFrame(pageImpactFrame)
+  resetFurnaceWhiteout()
   stopFurnaceRevealAudio()
   contract?.dispose()
   furnace?.dispose()
@@ -812,6 +833,7 @@ onBeforeUnmount(() => {
         :class="{ dimmed: showResult }"
         ref="furnaceRef"
       ></canvas>
+      <div class="furnace-base-shadow" aria-hidden="true"></div>
       <div class="top">
         <div class="brand">元游猫 <span>汰换合同交互原型</span></div>
         <div class="top-actions">
@@ -1080,6 +1102,13 @@ onBeforeUnmount(() => {
 
       <div class="toast" :class="{ show: toastShow }">{{ toastMsg }}</div>
     </div>
+    <Teleport to="body">
+      <div
+        class="furnace-whiteout"
+        :class="{ active: furnaceWhiteout }"
+        aria-hidden="true"
+      ></div>
+    </Teleport>
   </n-config-provider>
 </template>
 
@@ -1109,13 +1138,130 @@ onBeforeUnmount(() => {
   inset: 0;
   width: 100vw;
   height: 100vh;
-  z-index: 0;
+  z-index: 1;
   pointer-events: none;
   transition: opacity 0.35s ease, filter 0.35s ease;
 }
 .furnace-layer.dimmed {
   opacity: 0.16;
   filter: brightness(0.55) saturate(0.55);
+}
+
+/* CSS contact shadow beneath the floating furnace base. */
+.furnace-base-shadow {
+  position: fixed;
+  left: 50%;
+  top: 75.5vh;
+  z-index: 0;
+  width: clamp(320px, 42vw, 620px);
+  height: clamp(72px, 9vw, 124px);
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  transform-origin: center;
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      ellipse at center,
+      rgba(0, 0, 0, 0.82) 0%,
+      rgba(0, 0, 0, 0.66) 27%,
+      rgba(2, 7, 14, 0.4) 48%,
+      rgba(4, 12, 24, 0.16) 65%,
+      transparent 78%
+    ),
+    radial-gradient(
+      ellipse at center,
+      rgba(13, 31, 54, 0.34),
+      transparent 70%
+    );
+  filter: blur(9px);
+  mix-blend-mode: multiply;
+  opacity: 0.88;
+  transition: opacity 0.35s ease, filter 0.35s ease;
+  will-change: opacity, transform;
+}
+.furnace-layer.dimmed + .furnace-base-shadow {
+  opacity: 0.18;
+  filter: blur(12px);
+}
+
+.furnace-whiteout {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.34s ease-out;
+  will-change: opacity;
+}
+.furnace-whiteout::before,
+.furnace-whiteout::after {
+  content: '';
+  position: absolute;
+  pointer-events: none;
+}
+.furnace-whiteout::before {
+  left: 50%;
+  top: 54%;
+  width: 28vmax;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    #fff 0%,
+    rgba(255, 255, 255, 0.98) 24%,
+    rgba(255, 242, 214, 0.72) 48%,
+    transparent 72%
+  );
+  filter: blur(10px);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.08);
+  transition: transform 0.34s ease-out, opacity 0.2s ease-out;
+  will-change: transform, opacity;
+}
+.furnace-whiteout::after {
+  inset: 0;
+  background: #fff;
+  opacity: 0;
+  transition: opacity 0.3s ease-out;
+  will-change: opacity;
+}
+.furnace-whiteout.active {
+  opacity: 1;
+  transition: none;
+}
+.furnace-whiteout.active::before {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(7.4);
+  transition: transform 0.52s cubic-bezier(0.42, 0, 0.72, 1), opacity 0.12s linear;
+}
+.furnace-whiteout.active::after {
+  opacity: 1;
+  transition: opacity 0.52s linear;
+}
+
+@media (max-width: 900px) {
+  .furnace-base-shadow {
+    top: 76.5vh;
+    width: min(88vw, 430px);
+    height: 82px;
+    filter: blur(7px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .furnace-whiteout,
+  .furnace-whiteout::before,
+  .furnace-whiteout::after,
+  .furnace-whiteout.active,
+  .furnace-whiteout.active::before,
+  .furnace-whiteout.active::after {
+    transition-duration: 0.12s;
+    transition-delay: 0s;
+  }
+  .furnace-whiteout.active::before {
+    transform: translate(-50%, -50%) scale(7.4);
+  }
 }
 
 /* 右上角：切换汰换动效 */

@@ -730,6 +730,7 @@ body {
 
 .app.impact-shake::before,
 .app.impact-shake > .furnace-layer,
+.app.impact-shake > .furnace-base-shadow,
 .app.impact-shake > .top,
 .app.impact-shake > .layout,
 .app.impact-shake > .toast {
@@ -750,6 +751,7 @@ body {
   .app.furnace-rumbling,
   .app.impact-shake::before,
   .app.impact-shake > .furnace-layer,
+  .app.impact-shake > .furnace-base-shadow,
   .app.impact-shake > .top,
   .app.impact-shake > .layout,
   .app.impact-shake > .toast {
