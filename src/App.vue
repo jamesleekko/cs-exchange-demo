@@ -1607,7 +1607,7 @@ onBeforeUnmount(() => {
   padding: 10px;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  grid-auto-rows: 127px;
+  grid-auto-rows: 111px;
   gap: 6px;
   align-content: start;
   overflow-y: auto;
@@ -1630,8 +1630,8 @@ onBeforeUnmount(() => {
   position: relative;
   min-width: 0;
   min-height: 0;
-  height: 127px;
-  padding: 7px 7px 7px 10px;
+  height: 111px;
+  padding: 7px 7px 3px 10px;
   overflow: hidden;
   border: 1px solid #2d373c;
   border-radius: 2px;
@@ -1718,7 +1718,11 @@ onBeforeUnmount(() => {
 }
 .inv-item .fl,
 .contract-item .fl {
-  display: none;
+  flex: none;
+  color: #7f8a90;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 13px;
 }
 .inv-item .add-hint,
 .inv-item .lock-tag,
@@ -1872,7 +1876,7 @@ onBeforeUnmount(() => {
   padding-right: 2px;
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  grid-auto-rows: 127px;
+  grid-auto-rows: 111px;
   gap: 6px;
   align-content: start;
   overflow-y: auto;
@@ -1889,7 +1893,7 @@ onBeforeUnmount(() => {
   color: #ff7373;
 }
 .contract-item.empty {
-  height: 127px;
+  height: 111px;
   padding: 0;
   display: flex;
   align-items: center;
