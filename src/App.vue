@@ -251,11 +251,14 @@ const themeOverrides = {
 
 const selected = ref([])
 const confirmChecked = ref(false)
+const consoleEnabled = ref(true)
 const dragItem = ref(null)
 const dropActive = ref(false)
 const rarityFilter = ref('all')
 const inventoryRefreshing = ref(false)
 let inventoryRefreshTimer = null
+let inventoryClickReleaseFrame = 0
+let suppressInventoryClick = false
 
 // 本次汰换结果（严格按 CS2 规则生成，见 generateOutcome）
 const PLACEHOLDER_OUTCOME = {
@@ -285,6 +288,18 @@ const pageImpactDuration = ref(480)
 let pageImpactTimer = null
 let pageImpactFrame = 0
 let whiteoutReleaseFrame = 0
+const CONSOLE_TITLEBAR_HEIGHT = 36
+const CONSOLE_MIN_VISIBLE_WIDTH = 96
+const CONSOLE_VIEWPORT_MARGIN = 8
+const developerConsoleRef = ref(null)
+const developerConsoleVisible = ref(false)
+const developerConsoleDragging = ref(false)
+const developerConsoleOffset = ref({ x: 0, y: 0 })
+const developerConsoleStyle = computed(() => ({
+  '--console-offset-x': `${developerConsoleOffset.value.x}px`,
+  '--console-offset-y': `${developerConsoleOffset.value.y}px`,
+}))
+let developerConsoleDrag = null
 
 const toastMsg = ref('')
 const toastShow = ref(false)
@@ -477,6 +492,11 @@ function addItem(m) {
   selected.value.push(m)
 }
 
+function onInventoryClick(m) {
+  if (suppressInventoryClick) return
+  addItem(m)
+}
+
 function removeItem(m) {
   const i = selected.value.indexOf(m)
   if (i >= 0) selected.value.splice(i, 1)
@@ -484,7 +504,21 @@ function removeItem(m) {
 
 function onDragStart(m) {
   if (!canAdd(m)) return
+  suppressInventoryClick = true
   dragItem.value = m
+}
+
+function releaseInventoryClickGuard() {
+  cancelAnimationFrame(inventoryClickReleaseFrame)
+  inventoryClickReleaseFrame = requestAnimationFrame(() => {
+    suppressInventoryClick = false
+    inventoryClickReleaseFrame = 0
+  })
+}
+
+function onDragEnd() {
+  dragItem.value = null
+  releaseInventoryClickGuard()
 }
 
 function onDragLeave(e) {
@@ -495,8 +529,10 @@ function onDragLeave(e) {
 function onDrop(e) {
   e.preventDefault()
   dropActive.value = false
-  if (dragItem.value) addItem(dragItem.value)
+  const droppedItem = dragItem.value
   dragItem.value = null
+  if (droppedItem) addItem(droppedItem)
+  releaseInventoryClickGuard()
 }
 
 function resetSelected() {
@@ -534,6 +570,7 @@ function autoFill() {
 
 function startCraft() {
   if (running.value || !canConfirmItems.value) return
+  resetDeveloperConsole()
   running.value = true
   // 按 CS2 汰换规则生成本次结果（随机产出皮肤 → 盈亏随之产生）
   currentOutcome.value = generateOutcome(selected.value, currentNeed.value)
@@ -646,6 +683,121 @@ function showResultView() {
   }
 }
 
+function cancelContract() {
+  if (!showContract.value) return
+  contract?.stop()
+  stopSound(paperAudio)
+  stopSound(stampAudio)
+  furnace?.showOpen()
+  clearTimeout(pageImpactTimer)
+  cancelAnimationFrame(pageImpactFrame)
+  resetFurnaceWhiteout()
+  resetDeveloperConsole()
+  pageImpact.value = false
+  stageShake.value = false
+  flashBoom.value = false
+  edgeOn.value = false
+  furnaceRumbling.value = false
+  showContract.value = false
+  showStampHint.value = false
+  contractPhase.value = ''
+  showProcess.value = false
+  showBuilder.value = true
+  running.value = false
+  confirmChecked.value = false
+}
+
+function constrainDeveloperConsoleOffset(x, y, width, height) {
+  const centeredLeft = (window.innerWidth - width) / 2
+  const centeredTop = (window.innerHeight - height) / 2
+  // The right edge stays reachable while most of the panel can slide away.
+  const visibleWidth = Math.min(CONSOLE_MIN_VISIBLE_WIDTH, width)
+  const minLeft = visibleWidth - width
+  const maxLeft = Math.max(
+    minLeft,
+    window.innerWidth - width - CONSOLE_VIEWPORT_MARGIN,
+  )
+  const minTop = CONSOLE_VIEWPORT_MARGIN
+  const maxTop = Math.max(
+    minTop,
+    window.innerHeight - CONSOLE_TITLEBAR_HEIGHT - CONSOLE_VIEWPORT_MARGIN,
+  )
+  const left = Math.min(maxLeft, Math.max(minLeft, centeredLeft + x))
+  const top = Math.min(maxTop, Math.max(minTop, centeredTop + y))
+
+  return { x: left - centeredLeft, y: top - centeredTop }
+}
+
+function clampDeveloperConsolePosition() {
+  const element = developerConsoleRef.value
+  if (!element) return
+  const rect = element.getBoundingClientRect()
+  developerConsoleOffset.value = constrainDeveloperConsoleOffset(
+    developerConsoleOffset.value.x,
+    developerConsoleOffset.value.y,
+    rect.width,
+    rect.height,
+  )
+}
+
+async function showDeveloperConsole() {
+  if (!consoleEnabled.value) return
+  developerConsoleOffset.value = { x: 0, y: 0 }
+  developerConsoleVisible.value = true
+  await nextTick()
+  clampDeveloperConsolePosition()
+}
+
+function endDeveloperConsoleDrag(event) {
+  if (!developerConsoleDrag || event.pointerId !== developerConsoleDrag.pointerId) return
+  developerConsoleDrag = null
+  developerConsoleDragging.value = false
+  if (
+    event.type !== 'lostpointercapture'
+    && event.currentTarget.hasPointerCapture?.(event.pointerId)
+  ) {
+    event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+}
+
+function startDeveloperConsoleDrag(event) {
+  if (event.button !== 0 || !developerConsoleRef.value) return
+  developerConsoleDrag = {
+    pointerId: event.pointerId,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    offsetX: developerConsoleOffset.value.x,
+    offsetY: developerConsoleOffset.value.y,
+  }
+  developerConsoleDragging.value = true
+  event.currentTarget.setPointerCapture(event.pointerId)
+  event.preventDefault()
+}
+
+function moveDeveloperConsole(event) {
+  if (!developerConsoleDrag || event.pointerId !== developerConsoleDrag.pointerId) return
+  const element = developerConsoleRef.value
+  if (!element) return
+  const rect = element.getBoundingClientRect()
+  developerConsoleOffset.value = constrainDeveloperConsoleOffset(
+    developerConsoleDrag.offsetX + event.clientX - developerConsoleDrag.clientX,
+    developerConsoleDrag.offsetY + event.clientY - developerConsoleDrag.clientY,
+    rect.width,
+    rect.height,
+  )
+}
+
+function closeDeveloperConsole() {
+  developerConsoleDrag = null
+  developerConsoleDragging.value = false
+  developerConsoleVisible.value = false
+}
+
+function resetDeveloperConsole() {
+  closeDeveloperConsole()
+  developerConsoleOffset.value = { x: 0, y: 0 }
+}
+
 async function startContract() {
   showContract.value = true
   contractPhase.value = ''
@@ -732,6 +884,9 @@ function lowerFurnace() {
           stopSound(furnaceRumbleAudio)
           stopSound(energyChargeAudio)
         },
+        onPreClimax: () => {
+          showDeveloperConsole()
+        },
         onClimax: () => {
           furnaceWhiteoutColor.value = cfg.value.color
           furnaceWhiteout.value = true
@@ -754,6 +909,7 @@ function resetAll() {
   clearTimeout(pageImpactTimer)
   cancelAnimationFrame(pageImpactFrame)
   resetFurnaceWhiteout()
+  resetDeveloperConsole()
   pageImpact.value = false
   furnaceRumbling.value = false
   stopFurnaceRevealAudio()
@@ -784,6 +940,7 @@ function setCardEl(el, i) {
 }
 
 onMounted(() => {
+  window.addEventListener('resize', clampDeveloperConsolePosition)
   // 熔炉常驻背景层，进入页面即打开待机
   if (furnaceRef.value) {
     furnace = createFurnace(furnaceRef.value)
@@ -812,11 +969,14 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('resize', clampDeveloperConsolePosition)
   clearTimeout(toastTimer)
   clearTimeout(inventoryRefreshTimer)
   clearTimeout(pageImpactTimer)
   cancelAnimationFrame(pageImpactFrame)
+  cancelAnimationFrame(inventoryClickReleaseFrame)
   resetFurnaceWhiteout()
+  resetDeveloperConsole()
   stopFurnaceRevealAudio()
   contract?.dispose()
   furnace?.dispose()
@@ -902,10 +1062,17 @@ onBeforeUnmount(() => {
                   :class="{ locked: !canAdd(m) }"
                   :style="{ '--c': m[2] }"
                   :draggable="canAdd(m)"
+                  role="button"
+                  tabindex="0"
+                  :aria-label="canAdd(m) ? `添加 ${m[1]}` : `${m[1]}：${lockReason(m)}`"
+                  :title="canAdd(m) ? '点击添加，也可拖入汰换合同' : lockReason(m)"
+                  @click="onInventoryClick(m)"
+                  @keydown.enter.prevent="onInventoryClick(m)"
+                  @keydown.space.prevent="onInventoryClick(m)"
                   @dragstart="onDragStart(m)"
-                  @dragend="dragItem = null"
+                  @dragend="onDragEnd"
                 >
-                  <span v-if="canAdd(m)" class="add-hint">拖拽</span>
+                  <span v-if="canAdd(m)" class="add-hint">点击或拖拽</span>
                   <span v-else class="lock-tag">{{ lockReason(m) }}</span>
                   <div class="weapon-thumb">
                     <img :src="GENERIC_WEAPON_URL" alt="" aria-hidden="true" draggable="false" />
@@ -999,12 +1166,17 @@ onBeforeUnmount(() => {
                   </n-button>
                 </div>
                 <div class="confirm-tools">
-                  <n-checkbox
-                    v-model:checked="confirmChecked"
-                    :disabled="!canConfirmItems"
-                  >
-                    确认物品
-                  </n-checkbox>
+                  <div class="confirm-options">
+                    <n-checkbox v-model:checked="consoleEnabled">
+                      开启控制台
+                    </n-checkbox>
+                    <n-checkbox
+                      v-model:checked="confirmChecked"
+                      :disabled="!canConfirmItems"
+                    >
+                      确认物品
+                    </n-checkbox>
+                  </div>
                   <n-button
                     type="primary"
                     size="large"
@@ -1045,6 +1217,16 @@ onBeforeUnmount(() => {
           <div class="forge-phase contract-phase" :class="{ show: showContract && !!contractPhase }">
             {{ contractPhase }}
           </div>
+          <button
+            v-if="showContract"
+            type="button"
+            class="contract-cancel"
+            aria-label="取消合同"
+            title="取消合同"
+            @click="cancelContract"
+          >
+            <span aria-hidden="true">×</span>
+          </button>
           <!-- 「点击此处盖章」提示：合同到达盖章位置时显示，覆盖在印章位置 -->
           <button
             class="stamp-hint"
@@ -1117,6 +1299,56 @@ onBeforeUnmount(() => {
         :style="furnaceWhiteoutStyle"
         aria-hidden="true"
       ></div>
+    </Teleport>
+    <Teleport to="body">
+      <Transition name="console-pop">
+        <section
+          v-if="developerConsoleVisible"
+          ref="developerConsoleRef"
+          class="cs2-console"
+          :class="{ dragging: developerConsoleDragging }"
+          :style="developerConsoleStyle"
+          role="dialog"
+          aria-labelledby="developer-console-title"
+        >
+          <header
+            class="cs2-console-titlebar"
+            @pointerdown="startDeveloperConsoleDrag"
+            @pointermove="moveDeveloperConsole"
+            @pointerup="endDeveloperConsoleDrag"
+            @pointercancel="endDeveloperConsoleDrag"
+            @lostpointercapture="endDeveloperConsoleDrag"
+          >
+            <span id="developer-console-title">Counter-Strike 2 - 控制台</span>
+            <button
+              type="button"
+              class="cs2-console-close"
+              aria-label="关闭控制台"
+              title="关闭控制台"
+              @pointerdown.stop
+              @click="closeDeveloperConsole"
+            >
+              ×
+            </button>
+          </header>
+          <div class="cs2-console-log" role="log" aria-live="polite">
+            <p class="console-dim">Counter-Strike 2 developer console initialized.</p>
+            <p>Client connected to Steam datagram relay.</p>
+            <p class="console-info">[TradeUpContract] Contract acknowledged by game coordinator.</p>
+            <p>input_count: {{ selected.length }}</p>
+            <p>
+              input_rarity:
+              {{ activeRarity ? RARITIES[activeRarity].name : 'unknown' }}
+            </p>
+            <p>[Inventory] Consuming contract materials...</p>
+            <p class="console-warning">[ItemSchema] Generating trade-up result...</p>
+            <p class="console-success">Trade-up request accepted.</p>
+            <p class="console-prompt-line">
+              <span>]</span> cl_show_tradeup_result 1<span class="console-caret"></span>
+            </p>
+          </div>
+        </section>
+      </Transition>
     </Teleport>
   </n-config-provider>
 </template>
@@ -1260,12 +1492,180 @@ onBeforeUnmount(() => {
   transition: opacity 0.52s linear;
 }
 
+.cs2-console {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 90;
+  width: min(920px, calc(100vw - 32px));
+  height: min(560px, 64dvh);
+  min-height: min(320px, calc(100dvh - 32px));
+  max-height: calc(100dvh - 32px);
+  display: grid;
+  grid-template-rows: 36px minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid #778086;
+  border-radius: 2px;
+  background: #202529;
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, 0.72),
+    inset 0 0 0 1px rgba(0, 0, 0, 0.72);
+  color: #d3d8da;
+  font-family: Consolas, 'Lucida Console', 'Courier New', monospace;
+  pointer-events: auto;
+  transform: translate3d(
+    calc(-50% + var(--console-offset-x)),
+    calc(-50% + var(--console-offset-y)),
+    0
+  );
+  will-change: transform;
+}
+
+.cs2-console-titlebar {
+  min-width: 0;
+  padding: 0 0 0 11px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  overflow: hidden;
+  border-bottom: 1px solid #111416;
+  background: #3a4044;
+  color: #edf0f1;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.cs2-console-titlebar > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs2-console.dragging,
+.cs2-console.dragging .cs2-console-titlebar {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.cs2-console-close {
+  width: 38px;
+  height: 36px;
+  flex: 0 0 38px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid rgba(0, 0, 0, 0.3);
+  border-radius: 0;
+  background: transparent;
+  color: #d7dbdd;
+  font: 600 17px/1 Arial, sans-serif;
+  cursor: pointer;
+}
+
+.cs2-console-close:hover,
+.cs2-console-close:focus-visible {
+  outline: none;
+  background: #c94a4a;
+  color: #fff;
+}
+
+.cs2-console-close:focus-visible {
+  box-shadow: inset 0 0 0 2px #fff;
+}
+
+.cs2-console-log {
+  min-height: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #202529;
+  font-size: 12px;
+  line-height: 1.48;
+  letter-spacing: 0;
+  text-align: left;
+  word-break: break-word;
+}
+
+.cs2-console-log p {
+  margin: 0 0 2px;
+}
+
+.console-dim {
+  color: #8d969b;
+}
+
+.console-info {
+  color: #82b7d8;
+}
+
+.console-warning {
+  color: #d9bd68;
+}
+
+.console-success,
+.console-prompt-line > span:first-child {
+  color: #94c36b;
+}
+
+.console-prompt-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #d8dddf;
+  white-space: nowrap;
+}
+
+.console-caret {
+  width: 7px;
+  height: 14px;
+  flex: 0 0 7px;
+  display: inline-block;
+  background: #d8dddf;
+  animation: consoleCaretBlink 760ms steps(1, end) infinite;
+}
+
+.console-pop-enter-active,
+.console-pop-leave-active {
+  transition: opacity 140ms ease, transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.console-pop-enter-from,
+.console-pop-leave-to {
+  opacity: 0;
+  transform: translate3d(
+    calc(-50% + var(--console-offset-x)),
+    calc(-50% + var(--console-offset-y) + 14px),
+    0
+  ) scale(0.985);
+}
+
+@keyframes consoleCaretBlink {
+  50% { opacity: 0; }
+}
+
 @media (max-width: 900px) {
   .furnace-base-shadow {
     top: 76.5vh;
     width: min(88vw, 430px);
     height: 82px;
     filter: blur(7px);
+  }
+}
+
+@media (max-width: 600px) {
+  .cs2-console {
+    height: calc(100dvh - 16px);
+    min-height: 0;
+    max-height: calc(100dvh - 16px);
   }
 }
 
@@ -1357,6 +1757,35 @@ onBeforeUnmount(() => {
   background: rgba(20, 16, 8, 0.6);
   color: #ffe9b0;
   text-shadow: 0 0 16px rgba(212, 175, 55, 0.6);
+}
+.contract-cancel {
+  position: fixed;
+  top: max(96px, calc(env(safe-area-inset-top) + 72px));
+  right: max(16px, calc(env(safe-area-inset-right) + 20px));
+  z-index: 10;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 219, 151, 0.58);
+  border-radius: 3px;
+  background: rgba(20, 16, 8, 0.76);
+  color: #ffe9b0;
+  font: 500 27px/1 Arial, sans-serif;
+  cursor: pointer;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(6px);
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+.contract-cancel:hover,
+.contract-cancel:focus-visible {
+  border-color: #ff7d73;
+  background: #9f302e;
+  color: #fff;
+  outline: none;
+}
+.contract-cancel:focus-visible {
+  box-shadow: 0 0 0 2px rgba(255, 207, 40, 0.58), 0 8px 22px rgba(0, 0, 0, 0.3);
 }
 /* 「武器箱开启」需要接收点击（Raycaster 命中箱体才开箱） */
 .forge-layer.case-layer.show {
@@ -1667,7 +2096,7 @@ onBeforeUnmount(() => {
   transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 .inv-item {
-  cursor: grab;
+  cursor: pointer;
 }
 .inv-item::after,
 .contract-item::after {
@@ -1687,6 +2116,11 @@ onBeforeUnmount(() => {
 }
 .inv-item:active {
   cursor: grabbing;
+}
+.inv-item:focus-visible {
+  border-color: #ffc928;
+  outline: 2px solid rgba(255, 201, 40, 0.78);
+  outline-offset: -2px;
 }
 .weapon-thumb {
   width: 100%;
@@ -1955,9 +2389,9 @@ onBeforeUnmount(() => {
   font-weight: 800;
 }
 .contract-footer {
-  flex: 0 0 64px;
+  flex: 0 0 70px;
   margin: 0;
-  padding: 10px 14px;
+  padding: 7px 14px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1970,6 +2404,12 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 7px;
+}
+.confirm-options {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
 }
 .contract-tools :deep(.n-button),
 .confirm-btn {
@@ -2066,6 +2506,13 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 600px) {
+  .contract-cancel {
+    top: max(88px, calc(env(safe-area-inset-top) + 68px));
+    right: max(12px, calc(env(safe-area-inset-right) + 12px));
+    width: 40px;
+    height: 40px;
+    font-size: 24px;
+  }
   .top {
     height: 58px;
     padding: 0 16px;
@@ -2121,7 +2568,46 @@ onBeforeUnmount(() => {
   }
 }
 
+@media (min-width: 901px) {
+  .layout {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    padding-block: clamp(12px, 2vh, 24px);
+    align-items: center;
+  }
+
+  .stage {
+    height: min(790px, 100%);
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .stage-head {
+    flex: 0 0 auto;
+    padding-top: clamp(14px, 2.4vh, 26px);
+    padding-bottom: clamp(10px, 1.3vh, 14px);
+  }
+
+  .builder {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .panel-box {
+    height: 100%;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .console-pop-enter-active,
+  .console-pop-leave-active {
+    transition-duration: 1ms;
+  }
+  .console-caret {
+    animation: none;
+  }
   .refresh-btn.refreshing span {
     animation: none;
   }

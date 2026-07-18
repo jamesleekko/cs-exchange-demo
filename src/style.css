@@ -695,6 +695,27 @@ body {
     display: none;
   }
 }
+
+@media (min-width: 901px) {
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  body {
+    overflow: hidden;
+  }
+
+  .app {
+    height: 100dvh;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+}
+
 /* Background and furnace share the viewport coordinate system. */
 .app {
   position: relative;

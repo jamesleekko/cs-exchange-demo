@@ -99,10 +99,62 @@ async function runCase({ name, viewport }) {
   )
   await page.goto(url, { waitUntil: 'networkidle' })
   await modelLoaded
+  await page.waitForSelector(
+    '.furnace-layer[data-arm-back-glow-count="6"]',
+    { timeout: 5000 },
+  )
   await page.waitForTimeout(400)
   await page.screenshot({ path: `/tmp/furnace-fx-${name}-idle.png` })
 
+  const consoleToggle = page.getByRole('checkbox', { name: '开启控制台' })
+  if (!(await consoleToggle.isChecked())) {
+    throw new Error(`${name}: 开启控制台应默认勾选`)
+  }
+  await page.getByText('开启控制台', { exact: true }).click()
+  if (await consoleToggle.isChecked()) throw new Error(`${name}: 控制台选项无法关闭`)
+  await page.getByText('开启控制台', { exact: true }).click()
+
+  await page.locator('.inv-item').first().click()
+  const clickSelectedCount = await page.locator('.contract-item:not(.empty)').count()
+  if (clickSelectedCount !== 1) {
+    throw new Error(`${name}: 点击库存材料后选中 ${clickSelectedCount} 件，预期 1 件`)
+  }
+  await page.getByRole('button', { name: '重置合同' }).click()
+
   await page.getByRole('button', { name: '自动选择' }).click()
+  await page.getByText('确认物品', { exact: true }).click()
+  await page.locator('button.confirm-btn').click()
+  await page.waitForSelector('.contract-layer.show', { timeout: 10000 })
+
+  const cancelContractButton = page.getByRole('button', { name: '取消合同' })
+  const cancelContractCount = await cancelContractButton.count()
+  if (cancelContractCount !== 1 || !(await cancelContractButton.isVisible())) {
+    throw new Error(`${name}: 3D 合同右上角未显示取消按钮`)
+  }
+  const cancelContractBox = await cancelContractButton.boundingBox()
+  if (
+    !cancelContractBox
+    || cancelContractBox.x < viewport.width - 100
+    || cancelContractBox.y < 60
+    || cancelContractBox.y + cancelContractBox.height > viewport.height / 2
+  ) {
+    throw new Error(`${name}: 取消按钮没有位于 3D 合同右上区域`)
+  }
+  await page.screenshot({ path: `/tmp/furnace-fx-${name}-contract.png` })
+  await cancelContractButton.click()
+  await page.waitForFunction(
+    () => !document.querySelector('.contract-layer')?.classList.contains('show'),
+    null,
+    { timeout: 2000 },
+  )
+  const confirmToggle = page.getByRole('checkbox', { name: '确认物品' })
+  if (await confirmToggle.isChecked()) {
+    throw new Error(`${name}: 取消合同后确认物品仍处于勾选状态`)
+  }
+  if (!(await page.locator('.inv-panel').isVisible())) {
+    throw new Error(`${name}: 取消合同后未回到材料选择界面`)
+  }
+
   await page.getByText('确认物品', { exact: true }).click()
   await page.locator('button.confirm-btn').click()
   await page.waitForSelector('.contract-layer.show', { timeout: 10000 })
@@ -122,6 +174,11 @@ async function runCase({ name, viewport }) {
     window.__FURNACE_ALPHA_PROBE = true
   })
   await screenshotStage(page, name, 'surge', 320)
+  await page.waitForSelector('.cs2-console', { state: 'visible', timeout: 2000 })
+  if (await page.locator('.furnace-whiteout.active').count()) {
+    throw new Error(`${name}: 控制台未在粒子白场前弹出`)
+  }
+  await page.screenshot({ path: `/tmp/furnace-fx-${name}-console.png` })
   const alphaSample = await readCanvasAlpha(page)
   if (alphaSample && (alphaSample.corner[3] > 32 || alphaSample.center[3] === 0)) {
     throw new Error(`${name}: 透明 Bloom alpha 异常 ${JSON.stringify(alphaSample)}`)
@@ -132,6 +189,9 @@ async function runCase({ name, viewport }) {
   await setFurnaceTimeScale(page, 1)
 
   await page.waitForSelector('.furnace-whiteout.active', { timeout: 10000 })
+  if (!(await page.locator('.cs2-console').isVisible())) {
+    throw new Error(`${name}: 粒子爆发时控制台不应自动关闭`)
+  }
   const whiteoutAppearance = await page.locator('.furnace-whiteout').evaluate((element) => ({
     qualityColor: getComputedStyle(element).getPropertyValue('--whiteout-color')
       .trim()
@@ -162,6 +222,55 @@ async function runCase({ name, viewport }) {
 
   await page.waitForSelector('.result.show', { timeout: 12000 })
   await page.waitForTimeout(450)
+  const resultCoverage = await page.evaluate(() => {
+    const panel = document.querySelector('.cs2-console')
+    const resultCard = document.querySelector('.result-card')
+    if (!panel || !resultCard) return null
+    const panelRect = panel.getBoundingClientRect()
+    const resultRect = resultCard.getBoundingClientRect()
+    const left = Math.max(0, panelRect.left, resultRect.left)
+    const top = Math.max(0, panelRect.top, resultRect.top)
+    const right = Math.min(innerWidth, panelRect.right, resultRect.right)
+    const bottom = Math.min(innerHeight, panelRect.bottom, resultRect.bottom)
+    if (right <= left || bottom <= top) return { area: 0, onTop: false }
+    const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2)
+    const secretSelectors = [
+      '.prize-name',
+      '.result-side h2',
+      '.profit-text',
+      '.result-meta',
+    ]
+    const visibleSecrets = secretSelectors
+      .map((selector) => document.querySelector(selector)?.getBoundingClientRect())
+      .filter((rect) => (
+        rect
+        && rect.width > 0
+        && rect.height > 0
+        && rect.right > 0
+        && rect.left < innerWidth
+        && rect.bottom > 0
+        && rect.top < innerHeight
+      ))
+    const concealedSecrets = visibleSecrets.every((rect) => {
+      const x = (Math.max(0, rect.left) + Math.min(innerWidth, rect.right)) / 2
+      const y = (Math.max(0, rect.top) + Math.min(innerHeight, rect.bottom)) / 2
+      return !!document.elementFromPoint(x, y)?.closest('.cs2-console')
+    })
+    return {
+      area: (right - left) * (bottom - top),
+      onTop: !!hit?.closest('.cs2-console'),
+      secretCount: visibleSecrets.length,
+      concealedSecrets,
+    }
+  })
+  if (
+    !resultCoverage?.area
+    || !resultCoverage.onTop
+    || resultCoverage.secretCount !== 4
+    || !resultCoverage.concealedSecrets
+  ) {
+    throw new Error(`${name}: 控制台未实际遮挡结果 ${JSON.stringify(resultCoverage)}`)
+  }
   const resultQualityColor = await page.locator('.result-card').evaluate((element) => (
     getComputedStyle(element).getPropertyValue('--c').trim().toLowerCase()
   ))
@@ -169,6 +278,59 @@ async function runCase({ name, viewport }) {
     throw new Error(
       `${name}: 白场颜色 ${whiteoutQualityColor} 与结果颜色 ${resultQualityColor} 不一致`,
     )
+  }
+  await page.screenshot({ path: `/tmp/furnace-fx-${name}-result-covered.png` })
+
+  const consolePanel = page.locator('.cs2-console')
+  const consoleTitlebar = page.locator('.cs2-console-titlebar')
+  const consoleBefore = await consolePanel.boundingBox()
+  const titlebarBox = await consoleTitlebar.boundingBox()
+  if (!consoleBefore || !titlebarBox) throw new Error(`${name}: 无法测量控制台位置`)
+  const dragStartX = titlebarBox.x + titlebarBox.width * 0.5
+  const dragStartY = titlebarBox.y + titlebarBox.height * 0.5
+  await page.mouse.move(dragStartX, dragStartY)
+  await page.mouse.down()
+  await page.mouse.move(12, dragStartY, { steps: 12 })
+  await page.mouse.up()
+  await waitForFrames(page)
+
+  const consoleAfter = await consolePanel.boundingBox()
+  const closeButton = page.getByRole('button', { name: '关闭控制台' })
+  const closeButtonBox = await closeButton.boundingBox()
+  if (!consoleAfter || Math.abs(consoleAfter.x - consoleBefore.x) < 20) {
+    throw new Error(`${name}: 拖动标题栏后控制台未移动`)
+  }
+  const visibleWidth = Math.min(viewport.width, consoleAfter.x + consoleAfter.width)
+    - Math.max(0, consoleAfter.x)
+  if (visibleWidth < 90 || !closeButtonBox) {
+    throw new Error(`${name}: 拖动后未保留可找回的标题栏`)
+  }
+  if (
+    closeButtonBox.x < 0
+    || closeButtonBox.y < 0
+    || closeButtonBox.x + closeButtonBox.width > viewport.width
+    || closeButtonBox.y + closeButtonBox.height > viewport.height
+  ) {
+    throw new Error(`${name}: 拖动后关闭按钮越出视口`)
+  }
+  await page.screenshot({ path: `/tmp/furnace-fx-${name}-result-peek.png` })
+
+  await closeButton.click()
+  await page.waitForSelector('.cs2-console', { state: 'detached', timeout: 2000 })
+  const revealedResult = await page.evaluate(() => {
+    const resultCard = document.querySelector('.result-card')
+    if (!resultCard) return false
+    const rect = resultCard.getBoundingClientRect()
+    const left = Math.max(0, rect.left)
+    const top = Math.max(0, rect.top)
+    const right = Math.min(innerWidth, rect.right)
+    const bottom = Math.min(innerHeight, rect.bottom)
+    if (right <= left || bottom <= top) return false
+    const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2)
+    return !!hit?.closest('.result-card')
+  })
+  if (!revealedResult || !(await page.locator('.result.show').isVisible())) {
+    throw new Error(`${name}: 关闭控制台后结果未保持可见`)
   }
   await page.screenshot({ path: `/tmp/furnace-fx-${name}-result.png` })
 

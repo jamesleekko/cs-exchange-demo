@@ -25,6 +25,7 @@ const OPEN = {
   climaxAt: 6.88,
   done: 7.4,
 }
+const PRE_CLIMAX_LEAD_SECONDS = 1
 const FOV = 42
 const MODEL_SCALE = 3
 const CAMERA_HEIGHT = 5.05
@@ -1494,6 +1495,14 @@ export function createFurnace(canvas) {
       spawnOrbitMotes(56, 0.08, true)
     }
 
+    if (
+      !fired.preClimax
+      && phaseTime >= OPEN.climaxAt - PRE_CLIMAX_LEAD_SECONDS
+    ) {
+      fired.preClimax = true
+      callbacks.onPreClimax?.()
+    }
+
     if (!fired.climax && phaseTime >= OPEN.climaxAt) {
       fired.climax = true
       flash = 1
@@ -1734,6 +1743,7 @@ export function createFurnace(canvas) {
       return false
     }
     const sourceMaterials = new Set()
+    const frontArmGlowRings = []
     gltf.scene.traverse((object) => {
       if (!object.isMesh) return
       importedGeometries.add(object.geometry)
@@ -1749,7 +1759,17 @@ export function createFurnace(canvas) {
       object.castShadow = !emissive
       object.receiveShadow = !emissive
       if (object.name === 'Plaque_Logo') object.renderOrder = 4
+      if (/^Arm_[LR]_.*_GlowRing$/.test(object.name)) {
+        frontArmGlowRings.push(object)
+      }
     })
+    frontArmGlowRings.forEach((frontRing) => {
+      const backRing = frontRing.clone(false)
+      backRing.name = `${frontRing.name}_Back`
+      backRing.position.z = -Math.abs(frontRing.position.z)
+      frontRing.parent.add(backRing)
+    })
+    canvas.dataset.armBackGlowCount = String(frontArmGlowRings.length)
     sourceMaterials.forEach(disposeMaterial)
     modelBeam = gltf.scene.getObjectByName('Energy_Beam')
     modelBeamCore = gltf.scene.getObjectByName('Energy_Beam_Core')
@@ -1928,6 +1948,7 @@ export function createFurnace(canvas) {
     appRoot?.style.removeProperty('--forge-bg-scale')
     canvas.removeAttribute('data-fx-stage')
     canvas.removeAttribute('data-fx-alpha-probe')
+    canvas.removeAttribute('data-arm-back-glow-count')
     stop()
     resizeObserver.disconnect()
     canvas.removeEventListener('pointerdown', onPointerDown)
