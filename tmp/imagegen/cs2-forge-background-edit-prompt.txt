@@ -1,0 +1,28 @@
+Use case: precise-object-edit
+Asset type: widescreen CS2-themed game background edit
+Input images: Image 1 is the edit target. The supplied alpha mask marks the only regions that may be rebuilt.
+
+Primary request: Preserve the original industrial weapon-forging room and edit only the listed display regions. Keep the exact wide composition, camera, perspective, architecture, proportions, object positions outside the mask, cold navy-blue color grade, exposure, contrast, shadows, reflections, surface wear, and clean sharp rendering.
+
+1. Left wall pegboard weapon display: keep the rack, scale, perspective, lighting, and three existing horizontal positions. Replace only the three weapons, top to bottom, with exactly:
+- AK-47 | Wild Lotus: a recognizable AK-47 with vivid red lotus flowers over lush green vines.
+- M4A1-S | Black Lotus: a recognizable silenced M4A1-S with purple lotus flowers across a dark body.
+- AWP | Dragon Lore: a recognizable AWP with a golden dragon mural on an olive medieval-style body.
+Render them as realistic physical CS2 weapons mounted on the pegboard, not flat icons. No weapon names, captions, tags, or text underneath.
+
+2. Right illuminated selection panel: keep the outer metal frame, header, bottom control area, blue edge lighting, exact perspective, and a strict four-row by three-column grid. Replace only the twelve weapon thumbnails and their former captions. Every cell contains one clean side-profile weapon skin with no text or label beneath it. Exact rows from left to right:
+- Row 1, three AK-47 skins: Fire Serpent; Vulcan; The Empress.
+- Row 2, three M4A1-S skins: Printstream; Blue Phosphor; Hyper Beast.
+- Row 3, three AWP skins: Asiimov; Gungnir; Medusa.
+- Row 4, three USP-S skins: Kill Confirmed; Printstream; The Traitor.
+Keep equal cell spacing and do not mix weapon classes between rows.
+
+3. Center wall: completely remove the black owl symbol, the Chinese logo, and the small wordmark beneath it. Reconstruct uninterrupted aged steel wall panels with matching seams, dents, scratches, grime, and existing light falloff. Add nothing in its place.
+
+4. Two blue hanging flags: preserve both flags, folds, fabric, blue color, placement, and illumination. Correct only the yellow armed-person silhouette inside each CS2 mark so it matches the authentic official Counter-Strike 2 soldier icon proportions and pose. Keep the existing compact CS2 wordmark layout; make both corrected icons identical, crisp, and naturally printed on the fabric.
+
+5. Lower-left foreground crate: close the open crate with a solid flat industrial steel lid that matches the crate's exact perspective, construction, wear, and blue ambient light. On the lid place exactly four distinct premium CS2 glove sets, separated and clearly visible: Hand Wraps | Giraffe; Hydra Gloves | Emerald; Moto Gloves | POW!; Specialist Gloves | Lt. Commander. Match these skins' recognizable colors and patterns. No labels or text.
+
+6. Lower-right foreground crate: close the open crate with a matching solid flat industrial steel lid in the existing perspective. On the lid place exactly four distinct premium CS2 knives, separated and clearly visible: Butterfly Knife | Doppler Sapphire; Talon Knife | Doppler Ruby; M9 Bayonet | Case Hardened; Kukri Knife | Fade. Show one of each with recognizable blade shape and finish. No labels or text.
+
+Invariants: Change only the masked areas. Preserve every unmasked pixel and every other scene element. Preserve the original framing and 1672:941 aspect ratio. Do not crop, zoom, move the camera, relight the room, brighten the scene, alter the floor or architecture, replace signs, change crate fronts, or add people. Keep non-weapon signage outside the edit areas unchanged. Do not add any extra logos, captions, weapon names, watermark, UI text, floating objects, smoke, fog, sparks, particles, film grain, noise, sharpening halos, or compression artifacts. The result must remain crisp and seamless with no blur.
