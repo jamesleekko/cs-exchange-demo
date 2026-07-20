@@ -1,0 +1,13 @@
+Use case: precise-object-edit
+Asset type: CS2-style game environment console concept
+Input images: Image 1 is the unchanged project background. The alpha mask marks the only lower-center area that may be edited.
+
+Primary request: Add one fully raised industrial control console emerging vertically from below the bottom edge. Its complete visible outer silhouette must form a precise centered isosceles trapezoid: flat horizontal top, wider base cropped by the bottom edge, identical left and right slopes, exact bilateral symmetry around the image centerline. Keep it entirely inside the masked lower-center corridor and clearly separated from both foreground weapon crates.
+
+Design direction: a low-profile Armored Monolith Lift. Build a clean monolithic wedge from blackened gunmetal and brushed steel, with broad chamfers, restrained bolts, a thick rubber screen gasket, subtle edge wear, and thin cyan reflections from the workshop lighting. Add only slim symmetrical telescoping lift rails beneath the body so it clearly rose from an underground bay.
+
+Screen: one very large uninterrupted 16:7 display fills most of the inclined front face. The display is perfectly blank, uniform smoked blue-black glass with a clean flat viewing area and only a faint environmental reflection. No content of any kind.
+
+Lighting/materials: match the existing cold navy-blue lighting, camera, perspective, floor contact shadows, grime, roughness, scale, and photorealistic rendering. The console must look physically installed in this exact room.
+
+Constraints: change only the masked trapezoid. Preserve every other scene element, both weapon crates and their contents, all signs, flags, racks, wall, floor outside the mask, original framing, color grade, exposure, and sharpness. No UI, text, digits, logos, icons, buttons, gauges, progress bar, material particles, holograms, weapons, people, animation trails, smoke, noise, grain, blur, or watermark.

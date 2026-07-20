@@ -1,0 +1,13 @@
+Use case: precise-object-edit
+Asset type: CS2-style game environment console concept
+Input images: Image 1 is the unchanged project background. The alpha mask marks the only lower-center area that may be edited.
+
+Primary request: Add one fully raised modular control console emerging vertically from below the bottom edge. Make its complete outer silhouette a mathematically clean centered isosceles trapezoid: flat narrow top, wider base cropped by the bottom edge, equal left and right slopes, and exact mirror symmetry around the image centerline. The console must remain wholly inside the gap between the two foreground weapon crates.
+
+Design direction: an Insulated Foundry Cassette with a broad trapezoidal base, balanced rounded cast-metal shoulders, and replaceable off-white ceramic heat shields framing the central display. Combine aged black steel, heat-blued trim, chipped ceramic insulation, paired dark rubber seals, restrained copper coolant tubes, and small mirrored mechanical latches. Include two compact symmetric vertical guide rails and a shadowed lift cavity at the bottom edge.
+
+Screen: one large central pane of desaturated blue-black glass. It must be perfectly blank, evenly surfaced, and free of any content, with only soft reflections of the overhead cold lights and no active glow.
+
+Lighting/materials: match the existing perspective, cold blue ambience, grime, metal and ceramic roughness, realistic contact shadows, exposure, and sharp photorealistic rendering.
+
+Constraints: change only the masked trapezoid. Preserve all unmasked scenery exactly, including both foreground crates and their contents, displays, signs, flags, walls, floor, framing, color grade, and lighting. No UI, words, digits, logos, buttons, meters, progress bar, material animation, particles, holographic effects, extra props, people, smoke, noise, grain, blur, or watermark.

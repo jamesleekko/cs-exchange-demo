@@ -1,0 +1,13 @@
+Use case: precise-object-edit
+Asset type: CS2-style game environment console concept
+Input images: Image 1 is the unchanged project background. The alpha mask marks the only lower-center area that may be edited.
+
+Primary request: Add one fully raised industrial control console emerging vertically from below the bottom edge. Its overall outer silhouette must be a precise centered isosceles trapezoid: flat horizontal top, wider base cropped by the bottom edge, equal left and right slopes, exact bilateral symmetry around the image centerline. Keep every part inside the masked lower-center corridor without touching either foreground weapon crate.
+
+Design direction: a Twin-Piston Forge Bridge console. Two stout mirrored telescoping piston housings occupy the lower corners, joined by a heavy symmetric cross-frame around one broad recessed screen. Use aged heat-blued steel, dark cast iron, brushed piston rods, ribbed rubber bellows, paired coolant hoses, and sparse hazard-yellow paint remnants. Show believable oil wear and abrasion, but keep the silhouette clean and readable.
+
+Screen: a single wide blank anti-glare glass panel centered inside the frame. It is perfectly empty and uniformly dark blue-black, with no seams, glow, graphics, controls, or content. Small cold-cyan service lights may illuminate only the outer frame.
+
+Lighting/materials: match the existing cool blue ambience, camera perspective, floor contact shadows, grime, metal roughness, and cinematic photorealism so the assembly appears to have lifted from an underground machine bay.
+
+Constraints: change only the masked trapezoid. Preserve every unmasked pixel and all surrounding architecture, crates, gloves, knives, weapons, signs, flags, floor, framing, color grade, exposure, and sharpness. No UI, text, digits, logos, buttons, gauges, progress bar, materials, particles, holograms, extra props, people, smoke, noise, grain, blur, or watermark.

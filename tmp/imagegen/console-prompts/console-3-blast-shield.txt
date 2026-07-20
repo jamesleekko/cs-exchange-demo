@@ -1,0 +1,13 @@
+Use case: precise-object-edit
+Asset type: CS2-style game environment console concept
+Input images: Image 1 is the unchanged project background. The alpha mask marks the only lower-center area that may be edited.
+
+Primary request: Add one fully raised console emerging vertically from below the bottom edge. Its visible boundary must be a strict centered isosceles trapezoid: horizontal narrow top, wider bottom cropped by the image edge, matching left and right side angles, perfect bilateral symmetry around the image centerline. It must stay entirely between the two foreground weapon crates.
+
+Design direction: a Faceted Blast-Shield Terminal formed from nested armored plates. Shape it as a low forward-facing shell with mirrored inward-folding side cheeks and a slightly inclined central face. Use layered matte gunmetal, worn navy enamel, paired rivet strips, symmetrical recessed ventilation slots, and thin brushed-aluminum edge guards. A compact scissor-lift mechanism is visible below the shell, centered and symmetric.
+
+Screen: one oversized uninterrupted blank screen recessed deep inside the armor aperture. Use neutral near-black smoked glass with a perfectly clean rectangular viewing surface and restrained reflections. It contains absolutely no UI or markings.
+
+Lighting/materials: subtle cool-blue rim light and soft reflected floor light only; match the original camera, scale, grime, roughness, contact shadows, exposure, and sharp photorealistic style.
+
+Constraints: edit only the masked trapezoid. Preserve everything outside it exactly, especially both foreground crates and their items, weapon displays, signs, flags, architecture, floor, framing, color grade, and lighting. No UI, text, symbols, reticles, digits, progress bar, controls, logos, particles, material effects, people, weapons, smoke, grain, noise, blur, or watermark.
