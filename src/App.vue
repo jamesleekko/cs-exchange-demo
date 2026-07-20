@@ -1722,10 +1722,14 @@ onBeforeUnmount(() => {
   opacity: 1;
 }
 .forge-layer.contract-layer {
+  --contract-frame-top: 88px;
+  --contract-frame-right: 24px;
+  --contract-frame-bottom: 24px;
+  --contract-frame-left: 24px;
   position: fixed;
-  inset: 88px 24px 24px;
-  width: calc(100vw - 48px);
-  height: calc(100vh - 112px);
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
 }
 .forge-phase {
   position: absolute;
@@ -2493,9 +2497,10 @@ onBeforeUnmount(() => {
     font-size: 12px;
   }
   .forge-layer.contract-layer {
-    inset: 80px 12px 12px;
-    width: calc(100vw - 24px);
-    height: calc(100vh - 92px);
+    --contract-frame-top: 80px;
+    --contract-frame-right: 12px;
+    --contract-frame-bottom: 12px;
+    --contract-frame-left: 12px;
   }
   .inv-list {
     grid-template-columns: repeat(4, minmax(0, 1fr));

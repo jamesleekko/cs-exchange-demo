@@ -15,6 +15,11 @@ const PAGE_W = 900
 const PAGE_H = 1180
 const PLANE_W = 6.4
 const PLANE_H = (PAGE_H / PAGE_W) * PLANE_W
+const FLY_IN_START_Z = -6
+const FLY_IN_START_ROT_X = 1.1
+const FLY_IN_START_ROT_Z = 0.5
+const FLY_IN_START_SCALE = 0.6
+const FLY_IN_EDGE_MARGIN = 8
 const CONTRACT_SIGNER_NAME = 'XXX'
 const STAMP = {
   x: PAGE_W - 200,
@@ -317,9 +322,33 @@ export function createContract(canvas) {
       pos.setZ(i, z)
     }
     paperGeo.computeVertexNormals()
+    paperGeo.computeBoundingBox()
   }
   const paperMesh = new THREE.Mesh(paperGeo, paperMat)
   paperGroup.add(paperMesh)
+
+  // 入场首帧使用纸张包围盒计算屏幕底边外的起点，避免窄屏下纸张先在画面内淡入。
+  const flyInBounds = paperGeo.boundingBox
+  const flyInCorners = []
+  for (const x of [flyInBounds.min.x, flyInBounds.max.x]) {
+    for (const y of [flyInBounds.min.y, flyInBounds.max.y]) {
+      for (const z of [flyInBounds.min.z, flyInBounds.max.z]) {
+        flyInCorners.push(new THREE.Vector3(x, y, z))
+      }
+    }
+  }
+  const flyInMatrix = new THREE.Matrix4()
+  const flyInPoint = new THREE.Vector3()
+  const flyInPosition = new THREE.Vector3()
+  const flyInRotation = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(FLY_IN_START_ROT_X, 0, FLY_IN_START_ROT_Z),
+  )
+  const flyInScale = new THREE.Vector3(
+    FLY_IN_START_SCALE,
+    FLY_IN_START_SCALE,
+    FLY_IN_START_SCALE,
+  )
+  let flyInStartY = -9
 
   // ---------- 签字笔 ----------
   const pen = new THREE.Group()
@@ -425,11 +454,11 @@ export function createContract(canvas) {
     if (t < T.flyEnd) {
       // 自下方偏转抽出
       const p = easeOut(smooth(T.flyIn, T.flyEnd, t))
-      py = lerp(-9, 0, p)
-      pz = lerp(-6, 0, p)
-      rotX = lerp(1.1, 0, p)
-      rotZ = lerp(0.5, 0, p)
-      scale = lerp(0.6, 1, p)
+      py = lerp(flyInStartY, 0, p)
+      pz = lerp(FLY_IN_START_Z, 0, p)
+      rotX = lerp(FLY_IN_START_ROT_X, 0, p)
+      rotZ = lerp(FLY_IN_START_ROT_Z, 0, p)
+      scale = lerp(FLY_IN_START_SCALE, 1, p)
       op = clamp01(p * 2)
     } else if (t < T.flyOutStart) {
       // 定格：极缓慢的呼吸浮动
@@ -526,13 +555,56 @@ export function createContract(canvas) {
     const w = canvas.clientWidth || 1
     const h = canvas.clientHeight || 1
     renderer.setSize(w, h, false)
-    camera.aspect = w / h
+
+    // canvas 铺满视口供合同从真实屏幕边缘进出；原 inset 作为虚拟取景框，
+    // 让合同定格后的大小、位置及印章提示坐标与改动前完全一致。
+    const styles = getComputedStyle(canvas)
+    const readInset = (name) => Math.max(0, Number.parseFloat(styles.getPropertyValue(name)) || 0)
+    const frameTop = readInset('--contract-frame-top')
+    const frameRight = readInset('--contract-frame-right')
+    const frameBottom = readInset('--contract-frame-bottom')
+    const frameLeft = readInset('--contract-frame-left')
+    const frameWidth = Math.max(1, w - frameLeft - frameRight)
+    const frameHeight = Math.max(1, h - frameTop - frameBottom)
+    camera.aspect = frameWidth / frameHeight
     const halfFovTangent = Math.tan((FOV * Math.PI) / 360)
     // 保留约 6% 的画面安全边距，其余空间尽量交给合同纸张。
     const fitHeightZ = (PLANE_H * 0.53) / halfFovTangent
     const fitWidthZ = (PLANE_W * 0.53) / (halfFovTangent * camera.aspect)
     camBase.z = Math.max(11.8, fitHeightZ, fitWidthZ)
-    camera.updateProjectionMatrix()
+    camera.setViewOffset(
+      frameWidth,
+      frameHeight,
+      -frameLeft,
+      -frameTop,
+      w,
+      h,
+    )
+
+    // 将纸张初始姿态的最上沿放到屏幕底边之外 8px；二分求解可兼顾透视、旋转和各视口比例。
+    camera.position.copy(camBase)
+    camera.lookAt(0, -0.1, 0)
+    camera.updateMatrixWorld()
+    const targetTop = -1 - (FLY_IN_EDGE_MARGIN * 2) / h
+    const projectedTopAt = (y) => {
+      flyInPosition.set(0, y, FLY_IN_START_Z)
+      flyInMatrix.compose(flyInPosition, flyInRotation, flyInScale)
+      let top = -Infinity
+      for (const corner of flyInCorners) {
+        flyInPoint.copy(corner).applyMatrix4(flyInMatrix).project(camera)
+        top = Math.max(top, flyInPoint.y)
+      }
+      return top
+    }
+    let below = -9
+    while (projectedTopAt(below) > targetTop && below > -80) below -= 4
+    let above = 0
+    for (let i = 0; i < 24; i++) {
+      const mid = (below + above) / 2
+      if (projectedTopAt(mid) <= targetTop) below = mid
+      else above = mid
+    }
+    flyInStartY = below
   }
 
   // 将纸面上的真实印章位置投影到 canvas CSS 像素坐标，供 DOM 提示圈精确对齐。
