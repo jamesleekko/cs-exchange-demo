@@ -322,6 +322,162 @@ function loadMetalTexture(path, fallback, { colorSpace, repeat = 2.5 } = {}) {
   return texture
 }
 
+function drawSlantedBar(context, x, top, width, height, slant) {
+  context.beginPath()
+  context.moveTo(x + slant, top)
+  context.lineTo(x + slant + width, top)
+  context.lineTo(x + width, top + height)
+  context.lineTo(x, top + height)
+  context.closePath()
+  context.fill()
+}
+
+function makeWornDecalTexture({
+  width,
+  height,
+  seed,
+  transparentRgb,
+  wearCount,
+  paint,
+}) {
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d')
+  const background = context.createImageData(width, height)
+  for (let offset = 0; offset < background.data.length; offset += 4) {
+    background.data[offset] = transparentRgb[0]
+    background.data[offset + 1] = transparentRgb[1]
+    background.data[offset + 2] = transparentRgb[2]
+  }
+  context.putImageData(background, 0, 0)
+  paint(context)
+
+  let state = seed >>> 0
+  const random = () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0
+    return state / 0x100000000
+  }
+  context.save()
+  context.globalCompositeOperation = 'destination-out'
+  for (let index = 0; index < wearCount; index++) {
+    const longScratch = random() < 0.2
+    const scratchWidth = longScratch ? 14 + random() * 52 : 3 + random() * 15
+    const scratchHeight = longScratch ? 1 + random() * 3 : 2 + random() * 9
+    context.save()
+    context.translate(random() * width, random() * height)
+    context.rotate((random() - 0.5) * 0.24)
+    context.fillStyle = `rgba(0,0,0,${0.55 + random() * 0.45})`
+    context.fillRect(
+      -scratchWidth * 0.5,
+      -scratchHeight * 0.5,
+      scratchWidth,
+      scratchHeight,
+    )
+    context.restore()
+  }
+  context.restore()
+
+  // Preserve paint color under zero alpha so mipmaps do not create dark fringes.
+  const distressed = context.getImageData(0, 0, width, height)
+  for (let offset = 0; offset < distressed.data.length; offset += 4) {
+    if (distressed.data[offset + 3]) continue
+    distressed.data[offset] = transparentRgb[0]
+    distressed.data[offset + 1] = transparentRgb[1]
+    distressed.data[offset + 2] = transparentRgb[2]
+  }
+  context.putImageData(distressed, 0, 0)
+
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.colorSpace = THREE.SRGBColorSpace
+  return texture
+}
+
+function makeChamberHazardTexture() {
+  return makeWornDecalTexture({
+    width: 1024,
+    height: 256,
+    seed: 0x3f61c849,
+    transparentRgb: [128, 100, 47],
+    wearCount: 480,
+    paint: (context) => {
+      context.globalAlpha = 0.72
+      context.fillStyle = '#80642f'
+      for (let x = -118; x < 1100; x += 176) {
+        drawSlantedBar(context, x, 54, 94, 148, 72)
+      }
+      context.globalAlpha = 0.3
+      context.fillRect(26, 214, 972, 4)
+      context.globalAlpha = 1
+    },
+  })
+}
+
+function makePanelHazardTexture() {
+  return makeWornDecalTexture({
+    width: 512,
+    height: 256,
+    seed: 0xd051a62b,
+    transparentRgb: [145, 152, 150],
+    wearCount: 180,
+    paint: (context) => {
+      context.globalAlpha = 0.68
+      context.fillStyle = '#919896'
+      for (let x = 62; x <= 362; x += 75) {
+        drawSlantedBar(context, x, 56, 26, 136, 34)
+      }
+      context.globalAlpha = 1
+    },
+  })
+}
+
+function makeLowerHazardTexture() {
+  return makeWornDecalTexture({
+    width: 768,
+    height: 192,
+    seed: 0x8c40bf73,
+    transparentRgb: [128, 100, 47],
+    wearCount: 320,
+    paint: (context) => {
+      context.globalAlpha = 0.72
+      context.fillStyle = '#80642f'
+      for (let x = -78; x < 840; x += 144) {
+        drawSlantedBar(context, x, 42, 66, 108, 48)
+      }
+      context.globalAlpha = 0.3
+      context.fillRect(18, 162, 732, 3)
+      context.globalAlpha = 1
+    },
+  })
+}
+
+function makeDecalPlaneGeometry(width, height, options = {}) {
+  const {
+    bottomWidth = width,
+    uStart = 0,
+    uEnd = 1,
+    flipX = false,
+  } = options
+  const geometry = new THREE.PlaneGeometry(width, height)
+  const position = geometry.attributes.position
+  if (bottomWidth !== width) {
+    for (let index = 0; index < position.count; index++) {
+      if (position.getY(index) >= 0) continue
+      position.setX(index, Math.sign(position.getX(index)) * bottomWidth * 0.5)
+    }
+    position.needsUpdate = true
+  }
+  const uv = geometry.attributes.uv
+  for (let index = 0; index < uv.count; index++) {
+    const sourceU = uv.getX(index)
+    uv.setX(index, flipX
+      ? lerp(uEnd, uStart, sourceU)
+      : lerp(uStart, uEnd, sourceU))
+  }
+  uv.needsUpdate = true
+  return geometry
+}
+
 function disposeMaterial(material) {
   if (!material) return
   Object.values(material).forEach((value) => {
@@ -461,6 +617,31 @@ export function createFurnace(canvas) {
   metalTexture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy())
   metalRoughness.anisotropy = metalTexture.anisotropy
   metalBump.anisotropy = metalTexture.anisotropy
+
+  const hazardTextures = {
+    chamber: track(makeChamberHazardTexture()),
+    panel: track(makePanelHazardTexture()),
+    lower: track(makeLowerHazardTexture()),
+  }
+  Object.values(hazardTextures).forEach((texture) => {
+    texture.anisotropy = metalTexture.anisotropy
+  })
+  const makeHazardMaterial = (map) => track(new THREE.MeshStandardMaterial({
+    map,
+    transparent: true,
+    alphaTest: 0.06,
+    depthWrite: false,
+    metalness: 0.05,
+    roughness: 0.85,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  }))
+  const hazardMaterials = {
+    chamber: makeHazardMaterial(hazardTextures.chamber),
+    panel: makeHazardMaterial(hazardTextures.panel),
+    lower: makeHazardMaterial(hazardTextures.lower),
+  }
 
   const makeSurfaceMaterial = (name) => {
     const config = surface[name]
@@ -615,6 +796,94 @@ export function createFurnace(canvas) {
         : modelMaterials.hot
     }
     return modelMaterials.panel
+  }
+
+  function attachHazardDecals(root) {
+    let decalCount = 0
+    const addDecal = (parent, geometry, material, name) => {
+      if (!parent) return null
+      const decal = new THREE.Mesh(track(geometry), material)
+      decal.name = name
+      decal.castShadow = false
+      decal.receiveShadow = false
+      decal.renderOrder = 3
+      parent.add(decal)
+      decalCount += 1
+      return decal
+    }
+
+    const chamber = root.getObjectByName('TaperedChamber')
+    if (chamber) {
+      // Split one continuous strip across the GLB frustum's four front facets.
+      const surfaceY = -0.12
+      const taperRate = 12 / 35
+      const facetHalfAngle = THREE.MathUtils.degToRad(15)
+      const slope = Math.atan(taperRate * Math.cos(facetHalfAngle))
+      const offset = 0.002
+      const surfaceRadius = 0.6 - taperRate * surfaceY
+      const radius = surfaceRadius * Math.cos(facetHalfAngle)
+        + Math.cos(slope) * offset
+      const y = surfaceY + Math.sin(slope) * offset
+      const decalHeight = 0.145
+      const verticalHalfHeight = Math.cos(slope) * decalHeight * 0.5
+      const topWidth = 2
+        * (0.6 - taperRate * (surfaceY + verticalHalfHeight))
+        * Math.sin(facetHalfAngle)
+      const bottomWidth = 2
+        * (0.6 - taperRate * (surfaceY - verticalHalfHeight))
+        * Math.sin(facetHalfAngle)
+      const angles = [-45, -15, 15, 45]
+      angles.forEach((degrees, index) => {
+        const angle = THREE.MathUtils.degToRad(degrees)
+        const decal = addDecal(
+          chamber,
+          makeDecalPlaneGeometry(topWidth, decalHeight, {
+            bottomWidth,
+            uStart: index / 4,
+            uEnd: (index + 1) / 4,
+          }),
+          hazardMaterials.chamber,
+          `Hazard_Chamber_${index + 1}`,
+        )
+        decal.position.set(Math.sin(angle) * radius, y, Math.cos(angle) * radius)
+        decal.rotation.set(-slope, angle, 0, 'YXZ')
+      })
+    }
+
+    ['LowerDrum_Panel_05', 'LowerDrum_Panel_07'].forEach((name, index) => {
+      const panel = root.getObjectByName(name)
+      if (!panel) return
+      const decal = addDecal(
+        panel,
+        makeDecalPlaneGeometry(0.23, 0.12, { flipX: index === 1 }),
+        hazardMaterials.panel,
+        `Hazard_Panel_${index + 1}`,
+      )
+      decal.position.set(0, 0.025, 0.024)
+    })
+
+    const lowerBand = root.getObjectByName('LowerDrum_BottomBand')
+    if (lowerBand) {
+      const facetHalfAngle = THREE.MathUtils.degToRad(11.25)
+      const radius = 0.82 * Math.cos(facetHalfAngle) + 0.002
+      const angles = [-11.25, 11.25]
+      angles.forEach((degrees, index) => {
+        const angle = THREE.MathUtils.degToRad(degrees)
+        const decal = addDecal(
+          lowerBand,
+          makeDecalPlaneGeometry(0.31, 0.068, {
+            uStart: index / 2,
+            uEnd: (index + 1) / 2,
+          }),
+          hazardMaterials.lower,
+          `Hazard_Lower_${index + 1}`,
+        )
+        decal.position.set(Math.sin(angle) * radius, 0, Math.cos(angle) * radius)
+        decal.rotation.y = angle
+      })
+    }
+
+    canvas.dataset.hazardDecalCount = String(decalCount)
   }
 
   const modelRoot = new THREE.Group()
@@ -1791,6 +2060,7 @@ export function createFurnace(canvas) {
     if (!base || !docking || !modelUpper) {
       throw new Error('GLB is missing the required forge hierarchy')
     }
+    attachHazardDecals(gltf.scene)
 
     modelRoot.add(gltf.scene)
     modelMixer = new THREE.AnimationMixer(gltf.scene)
@@ -1949,6 +2219,7 @@ export function createFurnace(canvas) {
     canvas.removeAttribute('data-fx-stage')
     canvas.removeAttribute('data-fx-alpha-probe')
     canvas.removeAttribute('data-arm-back-glow-count')
+    canvas.removeAttribute('data-hazard-decal-count')
     stop()
     resizeObserver.disconnect()
     canvas.removeEventListener('pointerdown', onPointerDown)
