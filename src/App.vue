@@ -1504,48 +1504,118 @@ onBeforeUnmount(() => {
             :style="{ '--edge': edgeColor }"
           ></div>
 
-          <div class="result" :class="[{ show: showResult }, cfg.cls]">
-            <div class="result-card" :style="{ '--c': cfg.color }">
-              <div class="prize">{{ cfg.icon }}</div>
-              <div class="prize-name">{{ cfg.name }}</div>
-              <div class="tag" :style="{ background: cfg.color }">
-                {{ cfg.tag }}
+          <section
+            class="result"
+            :class="[{ show: showResult }, cfg.cls]"
+            :style="{
+              '--rarity-color': cfg.color,
+              '--wear-color': cfg.wearColor,
+            }"
+            role="region"
+            aria-live="polite"
+            aria-label="汰换结果"
+          >
+            <div class="result-ambient" aria-hidden="true"></div>
+            <svg
+              class="result-network"
+              viewBox="0 0 1400 760"
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              <g class="network-lines">
+                <path d="M28 240 210 116 406 214 586 78 790 194 994 92 1188 218 1386 126" />
+                <path d="M76 520 250 378 438 486 632 306 820 438 1016 330 1240 492 1390 388" />
+                <path d="M210 116 250 378 406 214 438 486 586 78 632 306 790 194 820 438 994 92 1016 330 1188 218 1240 492" />
+                <path d="M28 240 76 520 250 378 210 116" />
+                <path d="M406 214 632 306 790 194 1016 330 1188 218 1390 388" />
+              </g>
+              <g class="network-nodes">
+                <circle cx="210" cy="116" r="5" />
+                <circle cx="250" cy="378" r="4" />
+                <circle cx="406" cy="214" r="6" />
+                <circle cx="438" cy="486" r="4" />
+                <circle cx="586" cy="78" r="5" />
+                <circle cx="632" cy="306" r="6" />
+                <circle cx="790" cy="194" r="4" />
+                <circle cx="820" cy="438" r="5" />
+                <circle cx="994" cy="92" r="6" />
+                <circle cx="1016" cy="330" r="4" />
+                <circle cx="1188" cy="218" r="6" />
+                <circle cx="1240" cy="492" r="4" />
+              </g>
+            </svg>
+
+            <header class="result-header">
+              <div>
+                <div class="result-kicker">新物品</div>
+                <div class="result-quality">
+                  <span aria-hidden="true"></span>
+                  {{ cfg.tag }}级
+                </div>
+              </div>
+              <div class="result-contract-id" aria-hidden="true">
+                TRADE UP CONTRACT
+                <span>ITEM ACQUIRED</span>
+              </div>
+            </header>
+
+            <div class="result-showcase">
+              <div class="result-weapon-shell">
+                <span class="result-weapon-glow" aria-hidden="true"></span>
+                <img
+                  class="result-weapon-image"
+                  :src="GENERIC_WEAPON_URL"
+                  :alt="cfg.name"
+                  draggable="false"
+                />
+                <span class="result-item-code">{{ cfg.icon }}</span>
               </div>
             </div>
-            <div class="result-side">
-              <h2>{{ cfg.title }}</h2>
-              <div class="profit-text">{{ cfg.profit }}</div>
-              <div class="result-meta">
-                <div class="stat">
-                  <label>参考估值</label><strong>{{ cfg.value }}</strong>
-                </div>
-                <div class="stat">
-                  <label>投入成本</label><strong>{{ cfg.cost }}</strong>
-                </div>
-                <div class="stat">
-                  <label>磨损</label><strong :style="{ color: cfg.wearColor }">{{ cfg.wear }}</strong>
-                </div>
-                <div class="stat">
-                  <label>Float</label><strong>{{ cfg.float }}</strong>
+
+            <footer class="result-footer">
+              <div class="result-item-details">
+                <div class="prize-name">{{ cfg.name }}</div>
+                <div class="result-wear">
+                  <span class="result-wear-dot" aria-hidden="true"></span>
+                  <strong>{{ cfg.wear }}</strong>
+                  <span class="result-wear-separator" aria-hidden="true">/</span>
+                  <span>磨损值</span>
+                  <b>{{ cfg.float }}</b>
                 </div>
               </div>
-              <div class="result-actions">
-                <button
-                  class="main"
-                  @click="toast('已进入背包，订单结果同步刷新')"
-                >
-                  查看背包
-                </button>
-                <button @click="toast('分享图已生成，可保存发微信/QQ')">
-                  分享结果
-                </button>
-                <button @click="toast('已推荐同商家相同汰换合同')">
-                  再来一单
-                </button>
-                <button @click="resetAll">重新演示</button>
+
+              <div class="result-side">
+                <div class="result-outcome-copy">
+                  <h2>{{ cfg.title }}</h2>
+                  <div class="profit-text">{{ cfg.profit }}</div>
+                </div>
+                <div class="result-meta">
+                  <div class="stat">
+                    <label>参考估值</label><strong>{{ cfg.value }}</strong>
+                  </div>
+                  <div class="stat">
+                    <label>投入成本</label><strong>{{ cfg.cost }}</strong>
+                  </div>
+                </div>
+                <div class="result-actions">
+                  <button
+                    type="button"
+                    class="main"
+                    @click="toast('已进入背包，订单结果同步刷新')"
+                  >
+                    查看背包
+                  </button>
+                  <button type="button" @click="toast('分享图已生成，可保存发微信/QQ')">
+                    分享结果
+                  </button>
+                  <button type="button" @click="toast('已推荐同商家相同汰换合同')">
+                    再来一单
+                  </button>
+                  <button type="button" @click="resetAll">重新演示</button>
+                </div>
               </div>
-            </div>
-          </div>
+            </footer>
+          </section>
         </section>
       </main>
 
@@ -2722,15 +2792,609 @@ onBeforeUnmount(() => {
   margin-top: 4px;
   font: 800 15px/1.2 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
-.result-card,
-.stat,
-.result-actions button,
-.tag {
-  border-radius: 3px;
+/* ===== CS2 风格结果展示：所有光效均由产出品质色驱动 ===== */
+.stage > .result {
+  --rarity-color: #eb4b4b;
+  --wear-color: #8fc63d;
+
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  min-width: 0;
+  min-height: 0;
+  display: none;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  align-items: stretch;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--rarity-color) 48%, rgba(255, 255, 255, 0.2));
+  border-left: 8px solid var(--rarity-color);
+  border-radius: 2px;
+  background: #07090d;
+  box-shadow:
+    0 30px 90px rgba(0, 0, 0, 0.72),
+    inset 0 0 90px color-mix(in oklab, var(--rarity-color) 12%, transparent);
+  color: #f6f7f8;
+  isolation: isolate;
 }
-.result-card {
-  border-color: #596267;
-  background: linear-gradient(180deg, rgba(23, 30, 34, 0.96), rgba(7, 12, 15, 0.98));
+
+.stage > .result.show {
+  display: grid;
+  animation: cs2ResultReveal 0.62s cubic-bezier(0.16, 0.82, 0.24, 1) both;
+}
+
+.stage > .result::before,
+.stage > .result::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.stage > .result::before {
+  inset: 0;
+  opacity: 0.28;
+  background:
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.026) 0 1px, transparent 1px 4px),
+    linear-gradient(90deg, color-mix(in oklab, var(--rarity-color) 10%, transparent), transparent 18% 82%, color-mix(in oklab, var(--rarity-color) 8%, transparent));
+  mix-blend-mode: screen;
+}
+
+.stage > .result::after {
+  inset: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--rarity-color) 18%, transparent);
+}
+
+.result-ambient {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 48%, rgba(255, 255, 255, 0.2) 0 1%, color-mix(in oklab, var(--rarity-color) 72%, transparent) 2%, transparent 12%),
+    radial-gradient(ellipse at 50% 51%, color-mix(in oklab, var(--rarity-color) 52%, transparent) 0%, color-mix(in oklab, var(--rarity-color) 18%, transparent) 28%, transparent 64%),
+    linear-gradient(108deg, color-mix(in oklab, var(--rarity-color) 22%, #07090d) 0%, #080a0e 44%, color-mix(in oklab, var(--rarity-color) 16%, #06080b) 100%);
+}
+
+.result-ambient::before,
+.result-ambient::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 48%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  pointer-events: none;
+}
+
+.result-ambient::before {
+  width: clamp(420px, 60vw, 860px);
+  background: repeating-conic-gradient(
+    from 8deg,
+    color-mix(in oklab, var(--rarity-color) 54%, transparent) 0 0.8deg,
+    transparent 0.9deg 8deg
+  );
+  opacity: 0.34;
+  transform: translate(-50%, -50%);
+  -webkit-mask: radial-gradient(circle, transparent 0 31%, #000 31.4% 31.8%, transparent 32.2% 42%, #000 42.4% 42.8%, transparent 43.2% 54%, #000 54.4% 54.7%, transparent 55.1%);
+  mask: radial-gradient(circle, transparent 0 31%, #000 31.4% 31.8%, transparent 32.2% 42%, #000 42.4% 42.8%, transparent 43.2% 54%, #000 54.4% 54.7%, transparent 55.1%);
+  animation: resultOrbit 32s linear infinite;
+}
+
+.result-ambient::after {
+  width: clamp(180px, 22vw, 330px);
+  background: radial-gradient(
+    circle,
+    #fff 0 1%,
+    color-mix(in oklab, #fff 72%, var(--rarity-color)) 2% 4%,
+    color-mix(in oklab, var(--rarity-color) 58%, transparent) 10%,
+    transparent 68%
+  );
+  filter: blur(2px);
+  opacity: 0.95;
+  transform: translate(-50%, -50%);
+  animation: resultCorePulse 2.4s ease-in-out infinite alternate;
+}
+
+.result-network {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  color: var(--rarity-color);
+  pointer-events: none;
+  filter: drop-shadow(0 0 8px color-mix(in oklab, var(--rarity-color) 52%, transparent));
+}
+
+.network-lines {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.2;
+  opacity: 0.34;
+}
+
+.network-lines path {
+  vector-effect: non-scaling-stroke;
+}
+
+.network-nodes {
+  fill: currentColor;
+  opacity: 0.74;
+}
+
+.result-header,
+.result-showcase,
+.result-footer {
+  position: relative;
+  z-index: 2;
+}
+
+.result-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: clamp(24px, 4vh, 44px) clamp(28px, 5vw, 70px) 0;
+}
+
+.result-kicker {
+  color: color-mix(in oklab, var(--rarity-color) 82%, #fff);
+  font-size: clamp(34px, 4.2vw, 56px);
+  font-weight: 300;
+  letter-spacing: 0.025em;
+  line-height: 1;
+  text-shadow: 0 0 28px color-mix(in oklab, var(--rarity-color) 48%, transparent);
+}
+
+.result-quality {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(235, 239, 242, 0.62);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.result-quality span {
+  width: 28px;
+  height: 2px;
+  background: var(--rarity-color);
+  box-shadow: 0 0 10px var(--rarity-color);
+}
+
+.result-contract-id {
+  padding-top: 3px;
+  color: rgba(229, 234, 238, 0.32);
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  line-height: 1.55;
+  text-align: right;
+}
+
+.result-contract-id span {
+  display: block;
+  color: color-mix(in oklab, var(--rarity-color) 64%, rgba(255, 255, 255, 0.36));
+}
+
+.result-showcase {
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 0 clamp(30px, 8vw, 120px);
+}
+
+.result-weapon-shell {
+  position: relative;
+  width: min(82%, 880px);
+  display: grid;
+  place-items: center;
+  transform: translateY(-3%);
+  animation: resultWeaponArrive 0.88s 0.08s cubic-bezier(0.14, 0.86, 0.2, 1) both;
+}
+
+.result-weapon-glow {
+  position: absolute;
+  left: 50%;
+  top: 52%;
+  width: 68%;
+  aspect-ratio: 2.8;
+  border-radius: 50%;
+  background: color-mix(in oklab, var(--rarity-color) 48%, transparent);
+  filter: blur(42px);
+  opacity: 0.74;
+  transform: translate(-50%, -50%);
+}
+
+.result-weapon-image {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-height: clamp(180px, 33vh, 330px);
+  object-fit: contain;
+  user-select: none;
+  filter:
+    brightness(1.22)
+    contrast(1.06)
+    drop-shadow(0 20px 20px rgba(0, 0, 0, 0.72))
+    drop-shadow(0 0 22px color-mix(in oklab, var(--rarity-color) 72%, transparent));
+}
+
+.result-item-code {
+  position: absolute;
+  right: 2%;
+  bottom: -6px;
+  z-index: 2;
+  color: color-mix(in oklab, var(--rarity-color) 56%, rgba(255, 255, 255, 0.72));
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.result-footer {
+  margin: 0 clamp(28px, 5vw, 70px);
+  padding: clamp(14px, 2.4vh, 24px) 0 clamp(20px, 3.4vh, 34px);
+  display: grid;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(520px, 1.4fr);
+  align-items: end;
+  gap: clamp(24px, 4vw, 64px);
+  border-top: 1px solid rgba(255, 255, 255, 0.42);
+}
+
+.result-footer::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -1px;
+  width: min(190px, 22vw);
+  height: 2px;
+  background: var(--rarity-color);
+  box-shadow: 0 0 14px var(--rarity-color);
+}
+
+.result-item-details {
+  min-width: 0;
+}
+
+.result-item-details .prize-name {
+  margin: 0;
+  overflow: hidden;
+  color: #f4f5f6;
+  font-size: clamp(21px, 2.1vw, 30px);
+  font-weight: 760;
+  letter-spacing: 0.01em;
+  line-height: 1.18;
+  text-overflow: ellipsis;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.72);
+  white-space: nowrap;
+}
+
+.result-wear {
+  margin-top: 9px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: rgba(225, 231, 235, 0.62);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.result-wear-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--wear-color);
+  box-shadow: 0 0 9px var(--wear-color);
+}
+
+.result-wear strong {
+  color: var(--wear-color);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.result-wear-separator {
+  color: rgba(255, 255, 255, 0.24);
+}
+
+.result-wear b {
+  color: #e7eaec;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.result-side {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(150px, auto) minmax(190px, auto);
+  align-items: end;
+  justify-content: end;
+  gap: 12px 16px;
+}
+
+.result-outcome-copy {
+  min-width: 0;
+  align-self: center;
+}
+
+.result-side h2 {
+  color: rgba(246, 248, 249, 0.72);
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+}
+
+.result-side .profit-text {
+  margin-top: 5px;
+  color: color-mix(in oklab, var(--rarity-color) 70%, #fff);
+  font-size: clamp(16px, 1.55vw, 21px);
+  font-weight: 850;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.stage > .result.loss .profit-text {
+  color: rgba(226, 231, 235, 0.68);
+}
+
+.result-meta {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(88px, 1fr));
+  gap: 6px;
+}
+
+.stage > .result .stat {
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.045);
+  backdrop-filter: blur(8px);
+}
+
+.stage > .result .stat label {
+  margin: 0 0 3px;
+  color: rgba(222, 228, 232, 0.46);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.stage > .result .stat strong {
+  color: #f2f4f5;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.result-actions {
+  grid-column: 1 / -1;
+  margin: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  flex-wrap: nowrap;
+}
+
+.stage > .result .result-actions button {
+  min-width: 94px;
+  height: 36px;
+  padding: 0 13px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 1px;
+  background: rgba(7, 10, 14, 0.68);
+  color: rgba(242, 245, 247, 0.86);
+  font-size: 12px;
+  font-weight: 760;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  backdrop-filter: blur(9px);
+  transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease, transform 0.16s ease;
+}
+
+.stage > .result .result-actions button:hover {
+  border-color: color-mix(in oklab, var(--rarity-color) 68%, #fff);
+  background: color-mix(in oklab, var(--rarity-color) 18%, rgba(7, 10, 14, 0.82));
+  color: #fff;
+  transform: translateY(-1px);
+}
+
+.stage > .result .result-actions button:focus-visible {
+  outline: 2px solid color-mix(in oklab, var(--rarity-color) 72%, #fff);
+  outline-offset: 2px;
+}
+
+.stage > .result .result-actions .main {
+  border-color: color-mix(in oklab, var(--rarity-color) 76%, #fff);
+  background: color-mix(in oklab, var(--rarity-color) 76%, #1b1e22);
+  box-shadow: 0 0 22px color-mix(in oklab, var(--rarity-color) 24%, transparent);
+  color: #fff;
+}
+
+@keyframes cs2ResultReveal {
+  from {
+    opacity: 0;
+    filter: brightness(2.3) saturate(0.45);
+    transform: scale(1.035);
+  }
+  to {
+    opacity: 1;
+    filter: brightness(1) saturate(1);
+    transform: scale(1);
+  }
+}
+
+@keyframes resultWeaponArrive {
+  from {
+    opacity: 0;
+    filter: blur(12px) brightness(2.6);
+    transform: translateY(8%) scale(0.72);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0) brightness(1);
+    transform: translateY(-3%) scale(1);
+  }
+}
+
+@keyframes resultOrbit {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+@keyframes resultCorePulse {
+  to {
+    opacity: 0.7;
+    transform: translate(-50%, -50%) scale(1.12);
+  }
+}
+
+@media (min-width: 901px) and (max-height: 680px) {
+  .result-header {
+    padding-top: 16px;
+  }
+
+  .result-kicker {
+    font-size: 30px;
+  }
+
+  .result-quality {
+    margin-top: 7px;
+    font-size: 9px;
+  }
+
+  .result-showcase {
+    padding-inline: 70px;
+  }
+
+  .result-weapon-shell {
+    width: min(70%, 700px);
+  }
+
+  .result-weapon-image {
+    max-height: 210px;
+  }
+
+  .result-footer {
+    padding-top: 10px;
+    padding-bottom: 14px;
+    gap: 24px;
+  }
+
+  .result-item-details .prize-name {
+    font-size: 21px;
+  }
+
+  .result-wear {
+    margin-top: 6px;
+  }
+
+  .result-side {
+    gap: 8px 12px;
+  }
+
+  .stage > .result .result-actions button {
+    height: 32px;
+  }
+}
+
+@media (max-width: 900px) {
+  .stage > .result {
+    inset: 0;
+    min-height: 100%;
+    grid-template-rows: auto minmax(270px, 1fr) auto;
+    overflow-x: hidden;
+    overflow-y: auto;
+    border-left-width: 5px;
+  }
+
+  .result-header {
+    padding: 28px 24px 0;
+  }
+
+  .result-kicker {
+    font-size: clamp(34px, 8vw, 48px);
+  }
+
+  .result-showcase {
+    padding: 20px 22px;
+  }
+
+  .result-weapon-shell {
+    width: min(94%, 700px);
+  }
+
+  .result-weapon-image {
+    max-height: 260px;
+  }
+
+  .result-footer {
+    margin-inline: 24px;
+    padding: 18px 0 26px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+
+  .result-side {
+    grid-template-columns: minmax(0, 1fr) minmax(180px, auto);
+    justify-content: stretch;
+  }
+
+  .result-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stage > .result .result-actions button {
+    width: 100%;
+  }
+}
+
+@media (max-width: 600px) {
+  .result-header {
+    padding: 24px 18px 0;
+  }
+
+  .result-contract-id {
+    display: none;
+  }
+
+  .result-showcase {
+    padding-inline: 14px;
+  }
+
+  .result-item-code {
+    right: 0;
+  }
+
+  .result-footer {
+    margin-inline: 18px;
+  }
+
+  .result-side {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .result-meta {
+    grid-row: 2;
+  }
+
+  .result-actions {
+    grid-row: 3;
+  }
 }
 
 @media (min-width: 901px) and (max-width: 1200px) {
@@ -3488,6 +4152,10 @@ onBeforeUnmount(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .stage > .result.show,
+  .result-weapon-shell,
+  .result-ambient::before,
+  .result-ambient::after,
   .material-console,
   .material-console-screen::after,
   .material-console-idle > span,
