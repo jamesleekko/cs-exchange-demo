@@ -13,40 +13,45 @@ npm run dev        # Vite dev server on :5173 (auto-opens; allows *.trycloudflar
 npm run build      # production build to dist/
 npm run preview    # serve the built dist/
 
-node scripts/gen-anvil-sound.mjs         # regenerate forge/anvil WAVs in public/sfx/ (procedural audio, no deps)
+node scripts/gen-anvil-sound.mjs         # regenerate forge/anvil WAVs in public/sfx/
 node scripts/gen-case-sound.mjs          # regenerate weapon-case WAVs (case-land/case-open) in public/sfx/
+node scripts/gen-console-sfx.mjs         # regenerate material-add/remove/complete WAVs in public/sfx/
 node scripts/gen-pen-check-variants.mjs  # generate pen-check sound variants into public/temp/ for audition
+python3 scripts/build-console-frame.py  # crop + cut screen glass from the cassette console source image (requires Pillow)
 ```
 
 There is no linter or test runner configured. Validate changes manually with `npm run dev` and run `npm run build` before submitting. Commits use conventional prefixes (`feat:`, `fix:`).
 
 ## Architecture
 
-The entire application lives in **`src/App.vue`** (~1350 lines, Vue 3 `<script setup>`, naive-ui components under a `darkTheme` + `themeOverrides` config provider). `src/main.js` just mounts it. When changing behavior, expect to edit App.vue.
+The entire application lives in **`src/App.vue`** (~3500 lines, Vue 3 `<script setup>`, naive-ui components under a `darkTheme` + `themeOverrides` config provider). `src/main.js` just mounts it. When changing behavior, expect to edit App.vue.
 
 App.vue is organized as:
 - **Game data** (top of `<script setup>`): `RARITIES` (7 CS2 quality tiers with color + `need` count), `RARITY_ORDER`, `SKIN_POOL` (skins per tier), `BASE_PRICE`. These are the source of truth for the trade-up rules.
 - **Core rules**: `generateOutcome(items, count)` produces the trade-up result strictly following CS2 logic — output tier is one above input, output skin is random from the next tier's pool, and profit/loss is a weighted random factor over input cost. `wearTier(float)` maps a float to the CS2 exterior grade (崭新出厂…战痕累累).
 - **Selection state & validation**: `selected`, `activeRarity`, `currentNeed`, `canAdd`/`addItem`/`lockReason` enforce the rules — all inputs must share one quality; `need>0` tiers only (non-tradeable `gold` has `need=0`); `consumer`–`classified` need 10, `covert` needs 5.
-- **View flow**: mutually exclusive phases toggled by refs — `showBuilder` → (`showProcess` | `showForge` | `showContract` → `showCase`) → `showResult`. `startCraft()` computes the outcome first, then dispatches to `startClassic()`, `startForge()`, or `startContract()` based on `animMode`. In contract mode, `startContract()`'s `onDone` chains into `startCase()` (weapon-case opening) before the result view.
-- **Three animation modes** (`animMode`, default `'forge'`): `'classic'` is pure DOM/CSS card-collapse + particle explosion driven by `setTimeout` in App.vue; `'forge'` (熔炉锻造) and `'contract'` (合同签订) delegate to the three.js modules below.
+- **View flow**: mutually exclusive phases toggled by refs — `showBuilder` → (`showContract` → furnace close/open) → `showResult`. `startCraft()` computes the outcome then sets `showBuilder = false`; the builder's leave-transition completing fires `onBuilderLeaveComplete` → `startContract()`. There is no longer a user-selectable animation mode; the unified flow is always contract → furnace.
+- **Material console** (`materialConsolePhase`): a side-panel console widget that tracks the intake phase in order — `selecting` → `feeding` → `ready` → `imminent` → `processing` → `complete`. Phases only advance forward (enforced by rank map); use `setMaterialConsolePhase(phase, force)` to set them. The console displays a physical frame image (`console-screen-foundry-cassette-cutout.png`). A `consoleEnabled` ref gates whether the developer console overlay is permitted to open.
+- **Developer console**: a draggable overlay panel (refs `developerConsoleVisible`, `developerConsoleDragging`, `developerConsoleOffset`) that surfaces at the `onPreClimax` callback of the furnace reveal sequence.
 
 Trade-up rule invariant: if you change tier counts, tradeability, or add tiers, update **both** `RARITIES` and `RARITY_ORDER` (and `SKIN_POOL`/`BASE_PRICE` for any new tradeable tier) together.
 
 ### three.js modules (`src/three/`)
 
-- **`forge.js`** — the "熔炉锻造" confirm animation. `createForge(canvas)` returns `{ play, stop, resize, dispose }`. `play(opts)` runs one full timed sequence (投料 → 升火 → 落锤 → 产物) and drives the outside world through callbacks: `onIgnite`, `onPhase(text)`, `onStrike`, `onReveal`, `onDone`. App.vue uses these callbacks to play sounds, flash the stage edge, and switch to the result view. Uses `three/addons` postprocessing (UnrealBloom) and custom particle shaders.
-- **`contract.js`** — the "合同签订" confirm animation, same handle shape (`{ play, stop, resize, dispose }`) and callback pattern (`onPhase`, `onPaper`, `onSign`, `onStamp`, `onDone`). The contract page is drawn frame-by-frame on an offscreen 2D canvas (Chinese text, per-item rarity colors, animated check-mark stroke and stamp) and mapped as a texture onto a 3D plane.
-- **`case.js`** — the "武器箱开启" sequence that follows the contract animation. `createCase(canvas)` returns the same handle shape; `play({ color })` drops a CS2-style weapon case, then **waits for a user click** (internal Raycaster; the `.case-layer.show` CSS rule re-enables pointer events on the canvas) before opening the lid with rarity-colored inner glow/light column/motes. Callbacks: `onLand`, `onPhase(text)`, `onOpen`, `onGlow`, `onReveal`, `onDone`. The lid art is a 2D-canvas texture recolored per rarity on each `play()`.
-- **`starfield.js`** — ambient background particles. `createStarField(canvas)` returns `{ dispose }`.
+- **`furnace.js`** — persistent background 3D furnace (GLTF model, rendered 24 fps). `createFurnace(canvas)` returns `{ showOpen, close, armReveal, open, dispose }`. The furnace is created once in `onMounted` and stays alive for the full session. `showOpen()` snaps to the open idle pose. `close(callbacks)` runs the lid-lower animation and fires `onCloseStart`, `onClose`, `onClosed`. `armReveal(opts)` queues the reveal sequence (called immediately after `onClosed`) and fires `onOpen`, `onColumn`, `onRumbleStart`, `onRumbleEnd`, `onPreClimax`, `onClimax`, `onDone`. `open()` triggers the reveal (called by the contract's `onDone` callback, or queued if close is still running). Supports four surface variants: `aged`, `blued`, `olive`, `ceramic`.
+- **`contract.js`** — the "合同签订" confirm animation, same handle shape (`{ play, stop, resize, dispose }`) and callback pattern (`onPhase`, `onPaper`, `onAwaitStamp`, `onStamp`, `onDone`). The contract page is drawn frame-by-frame on an offscreen 2D canvas (Chinese text, per-item rarity colors, animated check-mark stroke and stamp) and mapped as a texture onto a 3D plane. After `onAwaitStamp` fires, the stamp must be triggered by calling `contract.triggerStamp()` (wired to the `showStampHint` click). `getStampScreenPosition()` returns `{ x, y, diameter }` in canvas-relative pixels for positioning the hint overlay.
+- **`transparent-bloom.js`** — custom postprocessing pass (UnrealBloom variant that preserves alpha channel transparency). Used by `furnace.js`.
+- **`forge.js`**, **`case.js`**, **`starfield.js`** — exist in the repo but are not currently imported by App.vue. Do not delete them; they may be revived.
 
-All are imperative handles created lazily/in `onMounted` and cleaned up in `onBeforeUnmount`/`resetAll`. Always call `dispose()` when tearing down to avoid leaking WebGL contexts and RAF loops. When adding a new animation mode, follow this same handle + timed-callback pattern and wire it into `animMode`/`animOptions`/`startCraft()`/`resetAll()`.
+The furnace and contract are coordinated in `startContract()`: `lowerFurnace()` runs in parallel with `contract.play()`, so the furnace begins closing at the same moment the contract slides in. When the contract's `onDone` fires, it calls `furnace.open()` which either starts the reveal immediately (if already closed) or queues it.
 
 ### Styles
 
 - **`src/style.css`** — global (minified, single line) styles for the stage, builder, classic process animation, result view, keyframes (`boom`, `edgePulse`, `sheen`, `shake`), and responsive rules.
-- App.vue `<style scoped>` overrides the layout, styles the material/contract cards, the forge overlay, and the animation-mode switch.
+- App.vue `<style scoped>` overrides the layout, styles the material/contract cards, the furnace overlay, the material console panel, and the developer console overlay.
 
 ### Assets
 
-Everything in `public/sfx/` and `public/temp/` is procedurally generated 16-bit PCM (synthesized from oscillators/noise, no third-party libs) — regenerate via the `scripts/*.mjs` generators rather than editing WAVs by hand. `public/temp/` holds audition variants (e.g. 20 stamp candidates); the chosen one is copied into `public/sfx/` for actual use.
+Everything in `public/sfx/` and `public/temp/` is procedurally generated 16-bit PCM (synthesized from oscillators/noise, no third-party libs) — regenerate via the `scripts/*.mjs` generators rather than editing WAVs by hand. `public/temp/` holds audition variants; the chosen one is copied into `public/sfx/` for actual use.
+
+`public/console-frames/console-screen-foundry-cassette-cutout.png` is built from `console-screen-foundry-cassette.png` by `scripts/build-console-frame.py` (crops to the display area and punches out the screen glass polygon with SSAA). Run the script after editing the source image; it requires `Pillow` (`pip install pillow`).
