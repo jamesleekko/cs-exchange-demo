@@ -42,6 +42,10 @@ const RARITY_ORDER = [
 
 const BRAND_LOGO_URL = `${import.meta.env.BASE_URL}yuanyoumao-logo.png`
 const GENERIC_WEAPON_URL = `${import.meta.env.BASE_URL}weapons/generic-weapon.png`
+const MATERIAL_CONSOLE_FRAME_URL = `${import.meta.env.BASE_URL}console-frames/console-screen-foundry-cassette-cutout.png`
+const MATERIAL_ADD_SOUND_URL = `${import.meta.env.BASE_URL}sfx/material-add.wav`
+const MATERIAL_REMOVE_SOUND_URL = `${import.meta.env.BASE_URL}sfx/material-remove.wav`
+const MATERIALS_COMPLETE_SOUND_URL = `${import.meta.env.BASE_URL}sfx/materials-complete.wav`
 const FILTER_RARITIES = RARITY_ORDER.filter((key) => RARITIES[key].need > 0)
 
 // 各品质材料（代号, 名称）。可汰换品质提供足量，便于凑齐所需数量。
@@ -260,6 +264,28 @@ let inventoryRefreshTimer = null
 let inventoryClickReleaseFrame = 0
 let suppressInventoryClick = false
 
+const MATERIAL_CONSOLE_PHASES = {
+  selecting: { text: '', code: 'MATERIAL INTAKE' },
+  feeding: { text: '材料投放中...', code: 'MATERIAL FEED' },
+  ready: { text: '汰换已就绪', code: 'TRADE-UP READY' },
+  imminent: { text: '即将进行汰换', code: 'SEQUENCE ARMED' },
+  processing: { text: '', code: 'PROCESSING' },
+  complete: { text: '汰换完成', code: 'TRADE-UP COMPLETE' },
+}
+const MATERIAL_CONSOLE_PHASE_RANK = {
+  selecting: 0,
+  feeding: 1,
+  ready: 2,
+  imminent: 3,
+  processing: 4,
+  complete: 5,
+}
+const materialConsolePhase = ref('selecting')
+const materialConsoleSigned = ref(false)
+let suppressMaterialConsoleAudio = false
+let materialConsoleResultTimer = null
+let materialsCompleteSoundTimer = null
+
 // 本次汰换结果（严格按 CS2 规则生成，见 generateOutcome）
 const PLACEHOLDER_OUTCOME = {
   cls: 'small', icon: '—', name: '等待汰换', tag: '', color: '#8fa2c0', edge: '#8fa2c0',
@@ -316,6 +342,7 @@ const showContract = ref(false)
 const contractPhase = ref('')
 const showStampHint = ref(false) // 「点击此处盖章」提示
 const stampHintStyle = ref({})
+let contractAwaitingStamp = false
 let paperAudio = null
 let stampAudio = null
 
@@ -332,6 +359,9 @@ let energyIgniteAudio = null
 let energyChargeAudio = null
 let energyClimaxAudio = null
 let resultRevealAudio = null
+let materialAddAudioPool = []
+let materialRemoveAudioPool = []
+let materialsCompleteAudio = null
 
 function playSound(el) {
   if (!el) return
@@ -351,6 +381,8 @@ function stopSound(el) {
 
 function stopFurnaceRevealAudio() {
   [
+    furnaceCloseAudio,
+    furnaceLockAudio,
     furnaceReleaseAudio,
     furnaceLiftAudio,
     furnaceSpinAudio,
@@ -367,6 +399,42 @@ function prepareAudio(src, volume) {
   audio.volume = volume
   audio.preload = 'auto'
   return audio
+}
+
+function prepareAudioPool(src, volume, size = 3) {
+  return Array.from({ length: size }, () => prepareAudio(src, volume))
+}
+
+function playSoundPool(pool) {
+  if (!pool.length) return
+  const audio = pool.find((item) => item.paused || item.ended) || pool.shift()
+  if (!audio) return
+  if (!pool.includes(audio)) pool.push(audio)
+  playSound(audio)
+}
+
+function stopSoundPool(pool) {
+  pool.forEach(stopSound)
+}
+
+function stopMaterialConsoleAudio() {
+  clearTimeout(materialsCompleteSoundTimer)
+  materialsCompleteSoundTimer = null
+  stopSoundPool(materialAddAudioPool)
+  stopSoundPool(materialRemoveAudioPool)
+  stopSound(materialsCompleteAudio)
+}
+
+function setMaterialConsolePhase(nextPhase, force = false) {
+  if (!(nextPhase in MATERIAL_CONSOLE_PHASE_RANK)) return
+  const currentRank = MATERIAL_CONSOLE_PHASE_RANK[materialConsolePhase.value]
+  const nextRank = MATERIAL_CONSOLE_PHASE_RANK[nextPhase]
+  if (force || nextRank >= currentRank) materialConsolePhase.value = nextPhase
+}
+
+function resetMaterialConsolePhase() {
+  materialConsoleSigned.value = false
+  setMaterialConsolePhase('selecting', true)
 }
 
 function triggerPageImpact(duration = 480) {
@@ -418,6 +486,16 @@ const activeRarity = computed(() =>
 )
 const currentNeed = computed(() =>
   activeRarity.value ? RARITIES[activeRarity.value].need : 0,
+)
+const materialConsoleNeed = computed(() => currentNeed.value || 10)
+const materialConsoleProgress = computed(() =>
+  Math.min(100, (selected.value.length / materialConsoleNeed.value) * 100),
+)
+const materialConsoleProgressStyle = computed(() => ({
+  '--material-progress': `${materialConsoleProgress.value}%`,
+}))
+const materialConsoleStatus = computed(
+  () => MATERIAL_CONSOLE_PHASES[materialConsolePhase.value],
 )
 // 左侧「符合汰换资格」计数：可作为输入（need>0）且尚未选中的材料
 const eligibleCount = computed(
@@ -475,9 +553,31 @@ function lockReason(m) {
   return ''
 }
 
+watch(
+  () => selected.value.map((item) => item[5]),
+  (ids, previousIds) => {
+    if (suppressMaterialConsoleAudio) return
+    const previous = new Set(previousIds)
+    const current = new Set(ids)
+    if (ids.some((id) => !previous.has(id))) playSoundPool(materialAddAudioPool)
+    else if (previousIds.some((id) => !current.has(id)))
+      playSoundPool(materialRemoveAudioPool)
+  },
+  { flush: 'sync' },
+)
+
 // 数量/品质不满足时自动取消勾选，避免绕过校验
-watch(canConfirmItems, (ok) => {
+watch(canConfirmItems, (ok, wasOk) => {
   if (!ok) confirmChecked.value = false
+  clearTimeout(materialsCompleteSoundTimer)
+  materialsCompleteSoundTimer = null
+  if (ok && !wasOk && !suppressMaterialConsoleAudio) {
+    materialsCompleteSoundTimer = setTimeout(() => {
+      materialsCompleteSoundTimer = null
+      if (canConfirmItems.value && !suppressMaterialConsoleAudio)
+        playSound(materialsCompleteAudio)
+    }, 420)
+  }
 })
 
 function addItem(m) {
@@ -536,6 +636,7 @@ function onDrop(e) {
 }
 
 function resetSelected() {
+  resetMaterialConsolePhase()
   selected.value = []
   confirmChecked.value = false
   toast('已清空汰换材料')
@@ -571,6 +672,8 @@ function autoFill() {
 function startCraft() {
   if (running.value || !canConfirmItems.value) return
   resetDeveloperConsole()
+  materialConsoleSigned.value = false
+  setMaterialConsolePhase('feeding', true)
   running.value = true
   // 按 CS2 汰换规则生成本次结果（随机产出皮肤 → 盈亏随之产生）
   currentOutcome.value = generateOutcome(selected.value, currentNeed.value)
@@ -685,9 +788,14 @@ function showResultView() {
 
 function cancelContract() {
   if (!showContract.value) return
+  clearTimeout(materialConsoleResultTimer)
+  materialConsoleResultTimer = null
+  contractAwaitingStamp = false
   contract?.stop()
   stopSound(paperAudio)
   stopSound(stampAudio)
+  stopMaterialConsoleAudio()
+  stopFurnaceRevealAudio()
   furnace?.showOpen()
   clearTimeout(pageImpactTimer)
   cancelAnimationFrame(pageImpactFrame)
@@ -698,6 +806,7 @@ function cancelContract() {
   flashBoom.value = false
   edgeOn.value = false
   furnaceRumbling.value = false
+  resetMaterialConsolePhase()
   showContract.value = false
   showStampHint.value = false
   contractPhase.value = ''
@@ -802,6 +911,7 @@ async function startContract() {
   showContract.value = true
   contractPhase.value = ''
   showStampHint.value = false
+  contractAwaitingStamp = false
   // 合同逐条列出的材料：名称 + 品质色
   const items = selected.value.map((m) => ({ name: m[1], color: m[2] }))
   await nextTick()
@@ -816,21 +926,17 @@ async function startContract() {
     onPhase: () => {}, // 不显示阶段文字
     onPaper: () => playSound(paperAudio),
     onAwaitStamp: () => {
-      // 合同到达盖章位置，显示「点击此处盖章」提示
-      const position = contract.getStampScreenPosition()
-      const canvasRect = contractRef.value.getBoundingClientRect()
-      stampHintStyle.value = {
-        left: `${canvasRect.left + position.x}px`,
-        top: `${canvasRect.top + position.y}px`,
-        width: `${position.diameter}px`,
-        height: `${position.diameter}px`,
-      }
-      showStampHint.value = true
+      contractAwaitingStamp = true
+      showContractStampHint()
     },
     onStamp: () => {
+      contractAwaitingStamp = false
+      materialConsoleSigned.value = true
+      setMaterialConsolePhase('imminent')
       playSound(stampAudio)
     },
     onDone: () => {
+      contractAwaitingStamp = false
       contractPhase.value = ''
       showContract.value = false
       showStampHint.value = false
@@ -838,6 +944,25 @@ async function startContract() {
       furnace?.open()
     },
   })
+}
+
+function showContractStampHint() {
+  if (
+    !contractAwaitingStamp
+    || materialConsolePhase.value !== 'ready'
+    || !contract
+    || !contractRef.value
+  ) return
+
+  const position = contract.getStampScreenPosition()
+  const canvasRect = contractRef.value.getBoundingClientRect()
+  stampHintStyle.value = {
+    left: `${canvasRect.left + position.x}px`,
+    top: `${canvasRect.top + position.y}px`,
+    width: `${position.diameter}px`,
+    height: `${position.diameter}px`,
+  }
+  showStampHint.value = true
 }
 
 // 用户点击「盖章」提示
@@ -861,6 +986,10 @@ function lowerFurnace() {
       playSound(furnaceLockAudio)
     },
     onClosed: () => {
+      if (!materialConsoleSigned.value) {
+        setMaterialConsolePhase('ready')
+        showContractStampHint()
+      }
       furnace.armReveal({
         color: cfg.value.color,
         onOpen: () => {
@@ -874,6 +1003,7 @@ function lowerFurnace() {
           triggerPageImpact(360)
         },
         onRumbleStart: () => {
+          setMaterialConsolePhase('processing')
           furnaceRumbling.value = true
           playSound(furnaceSpinAudio)
           playSound(furnaceRumbleAudio)
@@ -896,9 +1026,14 @@ function lowerFurnace() {
         onDone: () => {
           edgeOn.value = false
           furnaceRumbling.value = false
+          setMaterialConsolePhase('complete')
           playSound(resultRevealAudio)
-          showResultView()
           releaseFurnaceWhiteout()
+          clearTimeout(materialConsoleResultTimer)
+          materialConsoleResultTimer = setTimeout(() => {
+            materialConsoleResultTimer = null
+            showResultView()
+          }, 850)
         },
       })
     },
@@ -906,13 +1041,19 @@ function lowerFurnace() {
 }
 
 function resetAll() {
+  clearTimeout(materialConsoleResultTimer)
+  materialConsoleResultTimer = null
   clearTimeout(pageImpactTimer)
   cancelAnimationFrame(pageImpactFrame)
   resetFurnaceWhiteout()
   resetDeveloperConsole()
+  contractAwaitingStamp = false
   pageImpact.value = false
   furnaceRumbling.value = false
+  stopMaterialConsoleAudio()
   stopFurnaceRevealAudio()
+  stopSound(paperAudio)
+  stopSound(stampAudio)
   showBuilder.value = true
   showProcess.value = false
   showResult.value = false
@@ -924,7 +1065,10 @@ function resetAll() {
   furnace?.showOpen()
   edgeOn.value = false
   running.value = false
+  resetMaterialConsolePhase()
+  suppressMaterialConsoleAudio = true
   selected.value = []
+  suppressMaterialConsoleAudio = false
   confirmChecked.value = false
 }
 
@@ -960,6 +1104,9 @@ onMounted(() => {
   energyChargeAudio = prepareAudio('/sfx/energy-charge.wav', 0.42)
   energyClimaxAudio = prepareAudio('/sfx/energy-climax.wav', 0.58)
   resultRevealAudio = prepareAudio('/sfx/result-reveal.wav', 0.62)
+  materialAddAudioPool = prepareAudioPool(MATERIAL_ADD_SOUND_URL, 0.52)
+  materialRemoveAudioPool = prepareAudioPool(MATERIAL_REMOVE_SOUND_URL, 0.46)
+  materialsCompleteAudio = prepareAudio(MATERIALS_COMPLETE_SOUND_URL, 0.62)
   paperAudio = new Audio('/sfx/paper-rustle.wav')
   paperAudio.volume = 0.6
   paperAudio.preload = 'auto'
@@ -970,6 +1117,7 @@ onMounted(() => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', clampDeveloperConsolePosition)
+  clearTimeout(materialConsoleResultTimer)
   clearTimeout(toastTimer)
   clearTimeout(inventoryRefreshTimer)
   clearTimeout(pageImpactTimer)
@@ -977,7 +1125,11 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(inventoryClickReleaseFrame)
   resetFurnaceWhiteout()
   resetDeveloperConsole()
+  contractAwaitingStamp = false
+  stopMaterialConsoleAudio()
   stopFurnaceRevealAudio()
+  stopSound(paperAudio)
+  stopSound(stampAudio)
   contract?.dispose()
   furnace?.dispose()
 })
@@ -1000,6 +1152,99 @@ onBeforeUnmount(() => {
         ref="furnaceRef"
       ></canvas>
       <div class="furnace-base-shadow" aria-hidden="true"></div>
+      <section
+        class="material-console"
+        :class="[
+          `phase-${materialConsolePhase}`,
+          { concealed: showResult },
+        ]"
+        aria-label="汰换材料操作台"
+        :aria-hidden="showResult"
+      >
+        <div
+          class="material-console-screen"
+          :style="materialConsoleProgressStyle"
+        >
+          <div class="material-console-grid" aria-hidden="true"></div>
+          <Transition name="screen-mode" mode="out-in">
+            <div
+              v-if="materialConsolePhase === 'selecting'"
+              key="selecting"
+              class="material-screen-selection"
+            >
+              <TransitionGroup
+                name="material-packet"
+                tag="div"
+                class="material-packet-grid"
+                :class="{ 'five-packet-grid': materialConsoleNeed === 5 }"
+              >
+                <div
+                  v-for="(m, index) in selected"
+                  :key="m[5]"
+                  class="material-packet"
+                  :style="{
+                    '--quality-color': m[2],
+                    '--packet-delay': `${index * 24}ms`,
+                  }"
+                >
+                  <span>{{ String(index + 1).padStart(2, '0') }}</span>
+                  <strong>{{ m[0] }}</strong>
+                  <i aria-hidden="true"></i>
+                </div>
+              </TransitionGroup>
+              <div v-if="!selected.length" class="material-console-idle">
+                <span aria-hidden="true"><i></i></span>
+                <strong>等待材料</strong>
+              </div>
+            </div>
+            <div
+              v-else-if="materialConsolePhase === 'processing'"
+              key="processing"
+              class="material-console-loading"
+              role="status"
+              aria-label="汰换处理中"
+            >
+              <div class="loading-orbit orbit-one" aria-hidden="true"></div>
+              <div class="loading-orbit orbit-two" aria-hidden="true"></div>
+              <div class="loading-core" aria-hidden="true"><span></span></div>
+              <small>{{ materialConsoleStatus.code }}</small>
+            </div>
+            <div
+              v-else
+              :key="materialConsolePhase"
+              class="material-console-status"
+              role="status"
+              aria-live="polite"
+            >
+              <small>{{ materialConsoleStatus.code }}</small>
+              <strong>{{ materialConsoleStatus.text }}</strong>
+              <span aria-hidden="true"></span>
+            </div>
+          </Transition>
+
+          <div class="material-console-progress">
+            <div class="material-progress-head">
+              <span>材料装填</span>
+              <strong>{{ selected.length }} / {{ materialConsoleNeed }}</strong>
+            </div>
+            <div class="material-progress-track" aria-hidden="true">
+              <span></span>
+              <i
+                v-for="n in materialConsoleNeed"
+                :key="n"
+                :class="{ filled: n <= selected.length }"
+              ></i>
+            </div>
+          </div>
+        </div>
+        <img
+          class="material-console-frame"
+          :src="MATERIAL_CONSOLE_FRAME_URL"
+          alt=""
+          aria-hidden="true"
+          draggable="false"
+        />
+      </section>
       <div class="top">
         <div class="brand">
           <img class="brand-logo" :src="BRAND_LOGO_URL" alt="元游猫" />
@@ -1158,11 +1403,25 @@ onBeforeUnmount(() => {
               </div>
               <div class="contract-footer">
                 <div class="contract-tools">
-                  <n-button secondary class="tool-btn" @click="resetSelected">
-                    <span class="button-icon" aria-hidden="true">↻</span>重置合同
+                  <n-button
+                    secondary
+                    class="tool-btn"
+                    aria-label="重置合同"
+                    title="重置合同"
+                    @click="resetSelected"
+                  >
+                    <span class="button-icon" aria-hidden="true">↻</span>
+                    <span class="button-label">重置合同</span>
                   </n-button>
-                  <n-button secondary class="tool-btn" @click="autoFill">
-                    <span class="button-icon check-icon" aria-hidden="true">✓</span>自动选择
+                  <n-button
+                    secondary
+                    class="tool-btn"
+                    aria-label="自动选择"
+                    title="自动选择"
+                    @click="autoFill"
+                  >
+                    <span class="button-icon check-icon" aria-hidden="true">✓</span>
+                    <span class="button-label">自动选择</span>
                   </n-button>
                 </div>
                 <div class="confirm-tools">
@@ -1728,6 +1987,7 @@ onBeforeUnmount(() => {
   --contract-frame-left: 24px;
   position: fixed;
   inset: 0;
+  z-index: 7;
   width: 100vw;
   height: 100dvh;
 }
@@ -1799,7 +2059,7 @@ onBeforeUnmount(() => {
 /* 「点击此处盖章」提示按钮 */
 .stamp-hint {
   position: fixed;
-  z-index: 7;
+  z-index: 8;
   width: 120px;
   height: 120px;
   border: 3px solid rgba(212, 175, 55, 0.9);
@@ -2605,7 +2865,643 @@ onBeforeUnmount(() => {
   }
 }
 
+/* ===== 材料操作台：图 4 外框 + CSS 屏幕 ===== */
+.app {
+  --material-console-width: min(clamp(360px, 42vw, 680px), 60.95dvh);
+  --material-console-height: min(clamp(142px, 16.54vw, 268px), 24dvh);
+}
+
+.material-console {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  z-index: 6;
+  width: var(--material-console-width);
+  height: var(--material-console-height);
+  overflow: hidden;
+  pointer-events: none;
+  transform: translate3d(-50%, 0, 0);
+  filter: drop-shadow(0 -10px 22px rgba(0, 0, 0, 0.42));
+  transition: opacity 0.28s ease, transform 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: materialConsoleDock 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  isolation: isolate;
+}
+
+.material-console.concealed {
+  opacity: 0;
+  transform: translate3d(-50%, 30%, 0);
+}
+
+.material-console-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+  user-select: none;
+}
+
+.material-console-screen {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  clip-path: polygon(25.7% 12.4%, 74.3% 12.4%, 82.7% 100%, 17.3% 100%);
+  background:
+    radial-gradient(ellipse at 50% 82%, rgba(36, 146, 183, 0.16), transparent 58%),
+    linear-gradient(180deg, #07111c, #03070c 78%);
+  color: #dff8ff;
+  font-family: 'Arial Narrow', 'Microsoft YaHei', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.material-console-screen::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.035) 0,
+    rgba(255, 255, 255, 0.035) 1px,
+    transparent 1px,
+    transparent 4px
+  );
+  mix-blend-mode: screen;
+  opacity: 0.55;
+}
+
+.material-console-screen::after {
+  content: '';
+  position: absolute;
+  z-index: 4;
+  left: 12%;
+  right: 12%;
+  top: -12%;
+  height: 22%;
+  pointer-events: none;
+  background: linear-gradient(180deg, transparent, rgba(100, 224, 255, 0.13), transparent);
+  animation: materialConsoleScan 3.2s linear infinite;
+}
+
+.material-console-grid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.4;
+  background-image:
+    linear-gradient(rgba(92, 183, 210, 0.09) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(92, 183, 210, 0.07) 1px, transparent 1px);
+  background-size: 24px 18px;
+  mask-image: linear-gradient(180deg, transparent 4%, #000 28%, #000 82%, transparent);
+}
+
+.material-screen-selection,
+.material-console-status,
+.material-console-loading {
+  position: absolute;
+  z-index: 2;
+  left: 22%;
+  right: 22%;
+  top: 18%;
+  bottom: 25%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.material-packet-grid {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  padding-inline: 8%;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  align-content: center;
+}
+
+.material-packet-grid.five-packet-grid {
+  grid-template-rows: minmax(0, calc((100% - 4px) / 2));
+  align-content: center;
+}
+
+.material-packet {
+  --quality-bright: color-mix(in oklab, var(--quality-color) 66%, #fff);
+
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4px;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in oklab, var(--quality-bright) 74%, transparent);
+  background:
+    linear-gradient(115deg, color-mix(in oklab, var(--quality-bright) 24%, #06101a), rgba(3, 8, 13, 0.94));
+  box-shadow:
+    inset 0 0 12px color-mix(in oklab, var(--quality-bright) 17%, transparent),
+    0 0 9px color-mix(in oklab, var(--quality-bright) 22%, transparent);
+  color: var(--quality-bright);
+}
+
+.material-packet span {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  z-index: 1;
+  padding: 0;
+  color: color-mix(in oklab, var(--quality-bright) 58%, #7c8c96);
+  font-size: 7px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.material-packet strong {
+  min-width: 0;
+  overflow: hidden;
+  padding-inline: 2px;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-align: center;
+  text-overflow: ellipsis;
+  text-shadow: 0 0 10px var(--quality-bright);
+  white-space: nowrap;
+}
+
+.material-packet i {
+  align-self: stretch;
+  background: var(--quality-bright);
+  box-shadow: 0 0 9px var(--quality-bright);
+}
+
+.material-packet-enter-active,
+.material-packet-leave-active {
+  transition:
+    opacity 0.26s ease,
+    transform 0.38s cubic-bezier(0.2, 0.86, 0.22, 1),
+    filter 0.38s ease;
+}
+
+.material-packet-enter-active {
+  transition-delay: var(--packet-delay, 0ms);
+}
+
+.material-packet-enter-from {
+  opacity: 0;
+  filter: brightness(2.4) saturate(1.5);
+  transform: translateY(24px) scale(0.58) rotateX(52deg);
+}
+
+.material-packet-leave-to {
+  opacity: 0;
+  filter: brightness(1.8);
+  transform: translateY(18px) scale(0.5) rotateX(-42deg);
+}
+
+.material-packet-leave-active {
+  position: absolute;
+  width: calc((84% - 16px) / 5);
+  height: calc((100% - 4px) / 2);
+}
+
+.material-packet-move {
+  transition: transform 0.3s ease;
+}
+
+.material-console-idle {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  color: #6e9aac;
+}
+
+.material-console-idle > span {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(99, 213, 242, 0.46);
+  transform: rotate(45deg);
+  animation: materialIdlePulse 1.8s ease-in-out infinite;
+}
+
+.material-console-idle > span::before,
+.material-console-idle > span::after,
+.material-console-idle > span i {
+  content: '';
+  position: absolute;
+  background: rgba(112, 224, 252, 0.62);
+}
+
+.material-console-idle > span::before {
+  left: 50%;
+  top: -7px;
+  bottom: -7px;
+  width: 1px;
+}
+
+.material-console-idle > span::after {
+  top: 50%;
+  left: -7px;
+  right: -7px;
+  height: 1px;
+}
+
+.material-console-idle > span i {
+  inset: 12px;
+  box-shadow: 0 0 12px #67d9f5;
+}
+
+.material-console-idle strong {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.material-console-status {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 5px;
+  text-align: center;
+}
+
+.material-console-status small,
+.material-console-loading small {
+  color: #67c5dd;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 9px;
+  letter-spacing: 0;
+}
+
+.material-console-status strong {
+  position: relative;
+  z-index: 1;
+  color: #eafcff;
+  font-size: 22px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-shadow:
+    0 0 8px rgba(110, 224, 255, 0.72),
+    0 0 22px rgba(54, 172, 207, 0.42);
+  white-space: nowrap;
+}
+
+.material-console-status > span {
+  position: absolute;
+  left: 6%;
+  right: 6%;
+  top: 50%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #7de7ff, transparent);
+  box-shadow: 0 0 12px #58c9e5;
+  animation: materialStatusSweep 1.35s ease-in-out infinite;
+}
+
+.phase-ready .material-console-status strong,
+.phase-complete .material-console-status strong {
+  color: #fff3c2;
+  text-shadow:
+    0 0 8px rgba(255, 222, 118, 0.82),
+    0 0 24px rgba(222, 167, 55, 0.52);
+}
+
+.material-console-loading {
+  display: grid;
+  place-items: center;
+}
+
+.loading-orbit,
+.loading-core {
+  position: absolute;
+  left: 50%;
+  top: 47%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+}
+
+.loading-orbit {
+  width: 68px;
+  border: 2px solid transparent;
+  border-top-color: #79e6ff;
+  border-right-color: rgba(121, 230, 255, 0.32);
+  border-radius: 50%;
+  box-shadow: 0 0 14px rgba(67, 200, 233, 0.26);
+}
+
+.orbit-one {
+  animation: materialOrbit 0.85s linear infinite;
+}
+
+.orbit-two {
+  width: 50px;
+  border-width: 1px;
+  border-top-color: #ffd874;
+  border-left-color: rgba(255, 216, 116, 0.4);
+  animation: materialOrbitReverse 1.2s linear infinite;
+}
+
+.loading-core {
+  width: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(151, 235, 255, 0.74);
+  background: rgba(70, 191, 220, 0.11);
+  box-shadow: 0 0 18px rgba(84, 214, 246, 0.48);
+  transform: translate(-50%, -50%) rotate(45deg);
+  animation: materialCorePulse 0.72s ease-in-out infinite alternate;
+}
+
+.loading-core span {
+  width: 7px;
+  aspect-ratio: 1;
+  background: #dffaff;
+  box-shadow: 0 0 12px #8ceaff;
+}
+
+.material-console-loading small {
+  align-self: end;
+  margin-bottom: 2px;
+}
+
+.material-console-progress {
+  position: absolute;
+  z-index: 6;
+  left: 20.5%;
+  right: 20.5%;
+  bottom: 7px;
+}
+
+.material-progress-head {
+  margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #7194a1;
+  font-size: 8px;
+  line-height: 1;
+}
+
+.material-progress-head strong {
+  color: #c9f6ff;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.material-progress-track {
+  position: relative;
+  height: 9px;
+  display: flex;
+  overflow: hidden;
+  border: 1px solid rgba(92, 181, 205, 0.52);
+  background: rgba(1, 6, 10, 0.9);
+  box-shadow: inset 0 0 7px rgba(0, 0, 0, 0.9);
+}
+
+.material-progress-track > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--material-progress);
+  background: linear-gradient(90deg, #2a93b8, #79e6ff 72%, #fff0ab);
+  box-shadow: 0 0 14px rgba(94, 220, 250, 0.68);
+  transition: width 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.material-progress-track i {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  border-right: 1px solid rgba(1, 8, 12, 0.62);
+  opacity: 0.56;
+}
+
+.material-progress-track i:last-child {
+  border-right: 0;
+}
+
+.material-progress-track i.filled {
+  background: rgba(231, 252, 255, 0.08);
+}
+
+.screen-mode-enter-active,
+.screen-mode-leave-active {
+  transition: opacity 0.2s ease, transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.screen-mode-enter-from {
+  opacity: 0;
+  transform: translateY(12px) scale(0.97);
+}
+
+.screen-mode-leave-to {
+  opacity: 0;
+  transform: translateY(-8px) scale(0.98);
+}
+
+@keyframes materialConsoleDock {
+  from {
+    opacity: 0;
+    transform: translate3d(-50%, 38%, 0);
+  }
+}
+
+@keyframes materialConsoleScan {
+  to { transform: translateY(520%); }
+}
+
+@keyframes materialIdlePulse {
+  50% {
+    border-color: rgba(130, 233, 255, 0.84);
+    box-shadow: 0 0 16px rgba(74, 199, 229, 0.36);
+  }
+}
+
+@keyframes materialStatusSweep {
+  0%, 100% { opacity: 0; transform: scaleX(0.18); }
+  50% { opacity: 0.74; transform: scaleX(1); }
+}
+
+@keyframes materialOrbit {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+@keyframes materialOrbitReverse {
+  to { transform: translate(-50%, -50%) rotate(-360deg); }
+}
+
+@keyframes materialCorePulse {
+  to {
+    filter: brightness(1.45);
+    transform: translate(-50%, -50%) rotate(135deg) scale(1.12);
+  }
+}
+
+@media (min-width: 901px) and (max-height: 1399px) {
+  .builder {
+    padding-bottom: calc(
+      var(--material-console-height) - clamp(12px, 2dvh, 24px) + 14px
+    );
+  }
+}
+
+@media (min-width: 901px) and (max-width: 1100px) {
+  .material-packet {
+    grid-template-columns: minmax(0, 1fr) 3px;
+  }
+
+  .material-packet span {
+    display: none;
+  }
+
+  .material-packet strong {
+    padding-inline: 1px;
+    font-size: 8px;
+  }
+}
+
+@media (min-width: 901px) and (max-height: 650px) {
+  .contract-head {
+    flex-basis: 34px;
+  }
+
+  .contract-summary {
+    flex-basis: 52px;
+    padding: 2px 10px;
+  }
+
+  .contract-count {
+    font-size: 20px;
+    line-height: 22px;
+  }
+
+  .selected-count,
+  .contract-guide {
+    font-size: 10px;
+    line-height: 12px;
+  }
+
+  .contract-guide {
+    margin-top: 0;
+  }
+
+  .contract-drop {
+    margin-inline: 10px;
+    padding: 3px;
+  }
+
+  .contract-placeholder {
+    padding: 2px;
+  }
+
+  .contract-placeholder .ph-icon,
+  .contract-placeholder .small {
+    display: none;
+  }
+
+  .contract-placeholder .big {
+    font-size: 11px;
+  }
+
+  .expected-outcome {
+    flex-basis: 26px;
+    margin-inline: 10px;
+    font-size: 10px;
+  }
+
+  .contract-footer {
+    flex-basis: 60px;
+    gap: 6px;
+    padding: 4px 10px;
+  }
+
+  .contract-tools,
+  .confirm-tools {
+    gap: 4px;
+  }
+
+  .contract-tools :deep(.n-button) {
+    width: 36px;
+    height: 34px;
+    padding: 0;
+  }
+
+  .contract-tools .button-label {
+    display: none;
+  }
+
+  .contract-tools .button-icon {
+    margin-right: 0;
+  }
+
+  .confirm-options {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  .contract-footer :deep(.n-checkbox) {
+    --n-font-size: 11px;
+  }
+
+  .confirm-btn {
+    min-width: 108px;
+    height: 36px;
+  }
+}
+
+@media (max-width: 900px) {
+  .app {
+    --material-console-width: min(92vw, 560px, 60.95dvh);
+    --material-console-height: min(36.23vw, 221px, 24dvh);
+  }
+
+  .builder {
+    padding-bottom: calc(var(--material-console-height) + 18px);
+  }
+
+  .material-console-status strong {
+    font-size: 18px;
+  }
+
+  .loading-orbit {
+    width: 54px;
+  }
+
+  .orbit-two {
+    width: 40px;
+  }
+
+  .loading-core {
+    width: 19px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .material-console,
+  .material-console-screen::after,
+  .material-console-idle > span,
+  .material-console-status > span,
+  .loading-orbit,
+  .loading-core,
+  .material-packet-enter-active,
+  .material-packet-leave-active,
+  .material-packet-move,
+  .screen-mode-enter-active,
+  .screen-mode-leave-active,
+  .material-progress-track > span {
+    animation: none;
+    transition-duration: 1ms;
+    transition-delay: 0s;
+  }
   .console-pop-enter-active,
   .console-pop-leave-active {
     transition-duration: 1ms;
