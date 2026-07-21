@@ -2883,7 +2883,9 @@ onBeforeUnmount(() => {
   transform: translate3d(-50%, 0, 0);
   filter: drop-shadow(0 -10px 22px rgba(0, 0, 0, 0.42));
   transition: opacity 0.28s ease, transform 0.42s cubic-bezier(0.22, 1, 0.36, 1);
-  animation: materialConsoleDock 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation:
+    materialConsoleDock 0.7s cubic-bezier(0.22, 1, 0.36, 1) both,
+    var(--material-console-rumble, none);
   isolation: isolate;
 }
 

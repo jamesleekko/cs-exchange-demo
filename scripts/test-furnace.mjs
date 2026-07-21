@@ -59,6 +59,7 @@ async function assertFurnaceViewportLock(page, name, viewport) {
 
     const app = document.querySelector('.app')
     const canvas = document.querySelector('.furnace-layer')
+    const materialConsole = document.querySelector('.material-console')
     const rect = canvas?.getBoundingClientRect()
     const background = app ? getComputedStyle(app, '::before') : null
     return {
@@ -70,6 +71,9 @@ async function assertFurnaceViewportLock(page, name, viewport) {
         height: rect.height,
       },
       backgroundHeight: background ? Number.parseFloat(background.height) : 0,
+      materialConsoleAnimations: materialConsole
+        ? materialConsole.getAnimations().map((animation) => animation.animationName)
+        : [],
     }
   })
   await page.evaluate(() => window.scrollTo(0, 0))
@@ -84,6 +88,7 @@ async function assertFurnaceViewportLock(page, name, viewport) {
     || Math.abs(geometry.canvas.width - viewport.width) > tolerance
     || Math.abs(geometry.canvas.height - viewport.height) > tolerance
     || Math.abs(geometry.backgroundHeight - viewport.height) > tolerance
+    || !geometry.materialConsoleAnimations.includes('furnaceRumble')
   ) {
     throw new Error(`${name}: 熔炉层未锁定视口 ${JSON.stringify(geometry)}`)
   }
