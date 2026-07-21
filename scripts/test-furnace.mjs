@@ -264,13 +264,13 @@ async function runCase({ name, viewport }) {
   await setFurnaceTimeScale(page, 1)
 
   await page.waitForSelector('.result.show', { timeout: 12000 })
-  await page.waitForTimeout(450)
+  await page.waitForTimeout(700)
   const resultCoverage = await page.evaluate(() => {
     const panel = document.querySelector('.cs2-console')
-    const resultCard = document.querySelector('.result-card')
-    if (!panel || !resultCard) return null
+    const result = document.querySelector('.stage > .result.show')
+    if (!panel || !result) return null
     const panelRect = panel.getBoundingClientRect()
-    const resultRect = resultCard.getBoundingClientRect()
+    const resultRect = result.getBoundingClientRect()
     const left = Math.max(0, panelRect.left, resultRect.left)
     const top = Math.max(0, panelRect.top, resultRect.top)
     const right = Math.min(innerWidth, panelRect.right, resultRect.right)
@@ -304,6 +304,12 @@ async function runCase({ name, viewport }) {
       onTop: !!hit?.closest('.cs2-console'),
       secretCount: visibleSecrets.length,
       concealedSecrets,
+      coversVisibleResult: (
+        panelRect.left <= Math.max(0, resultRect.left) + 2
+        && panelRect.top <= Math.max(0, resultRect.top) + 2
+        && panelRect.right >= Math.min(innerWidth, resultRect.right) - 2
+        && panelRect.bottom >= Math.min(innerHeight, resultRect.bottom) - 2
+      ),
     }
   })
   if (
@@ -311,11 +317,12 @@ async function runCase({ name, viewport }) {
     || !resultCoverage.onTop
     || resultCoverage.secretCount !== 4
     || !resultCoverage.concealedSecrets
+    || !resultCoverage.coversVisibleResult
   ) {
     throw new Error(`${name}: 控制台未实际遮挡结果 ${JSON.stringify(resultCoverage)}`)
   }
-  const resultQualityColor = await page.locator('.result-card').evaluate((element) => (
-    getComputedStyle(element).getPropertyValue('--c').trim().toLowerCase()
+  const resultQualityColor = await page.locator('.stage > .result.show').evaluate((element) => (
+    getComputedStyle(element).getPropertyValue('--rarity-color').trim().toLowerCase()
   ))
   if (resultQualityColor !== whiteoutQualityColor) {
     throw new Error(
@@ -326,7 +333,42 @@ async function runCase({ name, viewport }) {
 
   const consolePanel = page.locator('.cs2-console')
   const consoleTitlebar = page.locator('.cs2-console-titlebar')
-  const consoleBefore = await consolePanel.boundingBox()
+  const resizeHandle = page.locator('.cs2-console-resize-handle.resize-se')
+  const consoleBeforeResize = await consolePanel.boundingBox()
+  const resizeHandleBox = await resizeHandle.boundingBox()
+  if (!consoleBeforeResize || !resizeHandleBox) {
+    throw new Error(`${name}: 无法测量控制台缩放边框`)
+  }
+  await page.mouse.move(
+    resizeHandleBox.x + resizeHandleBox.width / 2,
+    resizeHandleBox.y + resizeHandleBox.height / 2,
+  )
+  await page.mouse.down()
+  await page.mouse.move(
+    resizeHandleBox.x + resizeHandleBox.width / 2 - 68,
+    resizeHandleBox.y + resizeHandleBox.height / 2 - 56,
+    { steps: 10 },
+  )
+  await page.mouse.up()
+  await waitForFrames(page)
+
+  const consoleAfterResize = await consolePanel.boundingBox()
+  if (
+    !consoleAfterResize
+    || consoleAfterResize.width > consoleBeforeResize.width - 35
+    || consoleAfterResize.height > consoleBeforeResize.height - 30
+    || Math.abs(consoleAfterResize.x - consoleBeforeResize.x) > 3
+    || Math.abs(consoleAfterResize.y - consoleBeforeResize.y) > 3
+  ) {
+    throw new Error(
+      `${name}: 拖动右下边框后尺寸或锚点异常 ${JSON.stringify({
+        before: consoleBeforeResize,
+        after: consoleAfterResize,
+      })}`,
+    )
+  }
+
+  const consoleBefore = consoleAfterResize
   const titlebarBox = await consoleTitlebar.boundingBox()
   if (!consoleBefore || !titlebarBox) throw new Error(`${name}: 无法测量控制台位置`)
   const dragStartX = titlebarBox.x + titlebarBox.width * 0.5
@@ -361,16 +403,16 @@ async function runCase({ name, viewport }) {
   await closeButton.click()
   await page.waitForSelector('.cs2-console', { state: 'detached', timeout: 2000 })
   const revealedResult = await page.evaluate(() => {
-    const resultCard = document.querySelector('.result-card')
-    if (!resultCard) return false
-    const rect = resultCard.getBoundingClientRect()
+    const result = document.querySelector('.stage > .result.show')
+    if (!result) return false
+    const rect = result.getBoundingClientRect()
     const left = Math.max(0, rect.left)
     const top = Math.max(0, rect.top)
     const right = Math.min(innerWidth, rect.right)
     const bottom = Math.min(innerHeight, rect.bottom)
     if (right <= left || bottom <= top) return false
     const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2)
-    return !!hit?.closest('.result-card')
+    return !!hit?.closest('.result.show')
   })
   if (!revealedResult || !(await page.locator('.result.show').isVisible())) {
     throw new Error(`${name}: 关闭控制台后结果未保持可见`)

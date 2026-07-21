@@ -46,6 +46,9 @@ const MATERIAL_CONSOLE_FRAME_URL = `${import.meta.env.BASE_URL}console-frames/co
 const MATERIAL_ADD_SOUND_URL = `${import.meta.env.BASE_URL}sfx/material-add.wav`
 const MATERIAL_REMOVE_SOUND_URL = `${import.meta.env.BASE_URL}sfx/material-remove.wav`
 const MATERIALS_COMPLETE_SOUND_URL = `${import.meta.env.BASE_URL}sfx/materials-complete.wav`
+const MATERIALS_READY_VOICE_URL = `${import.meta.env.BASE_URL}sfx/voice-materials-ready.wav`
+const TRADE_UP_PROCESSING_VOICE_URL = `${import.meta.env.BASE_URL}sfx/voice-trade-up-processing.wav`
+const RESULT_READY_VOICE_URL = `${import.meta.env.BASE_URL}sfx/voice-result-ready.wav`
 const FILTER_RARITIES = RARITY_ORDER.filter((key) => RARITIES[key].need > 0)
 
 // 各品质材料（代号, 名称）。可汰换品质提供足量，便于凑齐所需数量。
@@ -317,15 +320,39 @@ let whiteoutReleaseFrame = 0
 const CONSOLE_TITLEBAR_HEIGHT = 36
 const CONSOLE_MIN_VISIBLE_WIDTH = 96
 const CONSOLE_VIEWPORT_MARGIN = 8
+const CONSOLE_DEFAULT_WIDTH = 1180
+const CONSOLE_DEFAULT_HEIGHT = 680
+const CONSOLE_MIN_WIDTH = 480
+const CONSOLE_MIN_HEIGHT = 320
+const CONSOLE_COMPACT_MIN_WIDTH = 300
+const CONSOLE_COMPACT_MIN_HEIGHT = 220
+const CONSOLE_INITIAL_COVERAGE = 4
+const CONSOLE_SCALE_MIN = 0.7
+const CONSOLE_SCALE_MAX = 1.5
+const CONSOLE_SCALE_STEP = 0.1
+const CONSOLE_RESIZE_DIRECTIONS = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']
 const developerConsoleRef = ref(null)
 const developerConsoleVisible = ref(false)
 const developerConsoleDragging = ref(false)
+const developerConsoleResizing = ref(false)
 const developerConsoleOffset = ref({ x: 0, y: 0 })
+const developerConsoleSize = ref({
+  width: CONSOLE_DEFAULT_WIDTH,
+  height: CONSOLE_DEFAULT_HEIGHT,
+})
+const developerConsoleScale = ref(1)
 const developerConsoleStyle = computed(() => ({
   '--console-offset-x': `${developerConsoleOffset.value.x}px`,
   '--console-offset-y': `${developerConsoleOffset.value.y}px`,
+  '--console-width': `${developerConsoleSize.value.width}px`,
+  '--console-height': `${developerConsoleSize.value.height}px`,
+  '--console-scale': String(developerConsoleScale.value),
 }))
+const developerConsoleScaleLabel = computed(() =>
+  `${Math.round(developerConsoleScale.value * 100)}%`,
+)
 let developerConsoleDrag = null
+let developerConsoleResize = null
 
 const toastMsg = ref('')
 const toastShow = ref(false)
@@ -362,6 +389,9 @@ let resultRevealAudio = null
 let materialAddAudioPool = []
 let materialRemoveAudioPool = []
 let materialsCompleteAudio = null
+let materialsReadyVoiceAudio = null
+let tradeUpProcessingVoiceAudio = null
+let resultReadyVoiceAudio = null
 
 function playSound(el) {
   if (!el) return
@@ -392,6 +422,19 @@ function stopFurnaceRevealAudio() {
     energyClimaxAudio,
     resultRevealAudio,
   ].forEach(stopSound)
+}
+
+function stopVoiceAnnouncements() {
+  [
+    materialsReadyVoiceAudio,
+    tradeUpProcessingVoiceAudio,
+    resultReadyVoiceAudio,
+  ].forEach(stopSound)
+}
+
+function playVoiceAnnouncement(audio) {
+  stopVoiceAnnouncements()
+  playSound(audio)
 }
 
 function prepareAudio(src, volume) {
@@ -796,6 +839,7 @@ function cancelContract() {
   stopSound(stampAudio)
   stopMaterialConsoleAudio()
   stopFurnaceRevealAudio()
+  stopVoiceAnnouncements()
   furnace?.showOpen()
   clearTimeout(pageImpactTimer)
   cancelAnimationFrame(pageImpactFrame)
@@ -816,6 +860,30 @@ function cancelContract() {
   confirmChecked.value = false
 }
 
+function getDeveloperConsoleSizeBounds() {
+  const maxWidth = Math.max(1, window.innerWidth - CONSOLE_VIEWPORT_MARGIN * 2)
+  const maxHeight = Math.max(1, window.innerHeight - CONSOLE_VIEWPORT_MARGIN * 2)
+  const minWidth = Math.min(
+    maxWidth,
+    CONSOLE_MIN_WIDTH,
+    Math.max(CONSOLE_COMPACT_MIN_WIDTH, maxWidth * 0.64),
+  )
+  const minHeight = Math.min(
+    maxHeight,
+    CONSOLE_MIN_HEIGHT,
+    Math.max(CONSOLE_COMPACT_MIN_HEIGHT, maxHeight * 0.42),
+  )
+  return { minWidth, minHeight, maxWidth, maxHeight }
+}
+
+function clampDeveloperConsoleSize(width, height) {
+  const bounds = getDeveloperConsoleSizeBounds()
+  return {
+    width: Math.round(Math.min(bounds.maxWidth, Math.max(bounds.minWidth, width))),
+    height: Math.round(Math.min(bounds.maxHeight, Math.max(bounds.minHeight, height))),
+  }
+}
+
 function constrainDeveloperConsoleOffset(x, y, width, height) {
   const centeredLeft = (window.innerWidth - width) / 2
   const centeredTop = (window.innerHeight - height) / 2
@@ -827,14 +895,60 @@ function constrainDeveloperConsoleOffset(x, y, width, height) {
     window.innerWidth - width - CONSOLE_VIEWPORT_MARGIN,
   )
   const minTop = CONSOLE_VIEWPORT_MARGIN
+  const titlebarHeight = Math.min(
+    height,
+    CONSOLE_TITLEBAR_HEIGHT * developerConsoleScale.value,
+  )
   const maxTop = Math.max(
     minTop,
-    window.innerHeight - CONSOLE_TITLEBAR_HEIGHT - CONSOLE_VIEWPORT_MARGIN,
+    window.innerHeight - titlebarHeight - CONSOLE_VIEWPORT_MARGIN,
   )
   const left = Math.min(maxLeft, Math.max(minLeft, centeredLeft + x))
   const top = Math.min(maxTop, Math.max(minTop, centeredTop + y))
 
   return { x: left - centeredLeft, y: top - centeredTop }
+}
+
+function getDeveloperConsoleInitialGeometry() {
+  const stage = stageRef.value?.getBoundingClientRect()
+  let width = CONSOLE_DEFAULT_WIDTH
+  let height = CONSOLE_DEFAULT_HEIGHT
+  let centerX = window.innerWidth / 2
+  let centerY = window.innerHeight / 2
+
+  if (stage) {
+    const left = Math.max(
+      0,
+      stage.left - CONSOLE_INITIAL_COVERAGE,
+    )
+    const top = Math.max(
+      0,
+      stage.top - CONSOLE_INITIAL_COVERAGE,
+    )
+    const right = Math.min(
+      window.innerWidth,
+      stage.right + CONSOLE_INITIAL_COVERAGE,
+    )
+    const bottom = Math.min(
+      window.innerHeight,
+      stage.bottom + CONSOLE_INITIAL_COVERAGE,
+    )
+    if (right > left && bottom > top) {
+      width = right - left
+      height = bottom - top
+      centerX = (left + right) / 2
+      centerY = (top + bottom) / 2
+    }
+  }
+
+  const size = clampDeveloperConsoleSize(width, height)
+  const offset = constrainDeveloperConsoleOffset(
+    centerX - window.innerWidth / 2,
+    centerY - window.innerHeight / 2,
+    size.width,
+    size.height,
+  )
+  return { size, offset }
 }
 
 function clampDeveloperConsolePosition() {
@@ -849,9 +963,54 @@ function clampDeveloperConsolePosition() {
   )
 }
 
+async function clampDeveloperConsoleGeometry() {
+  if (!developerConsoleVisible.value) return
+  const size = clampDeveloperConsoleSize(
+    developerConsoleSize.value.width,
+    developerConsoleSize.value.height,
+  )
+  if (
+    size.width !== developerConsoleSize.value.width
+    || size.height !== developerConsoleSize.value.height
+  ) {
+    developerConsoleSize.value = size
+    await nextTick()
+  }
+  clampDeveloperConsolePosition()
+}
+
+function clampDeveloperConsoleScale(scale) {
+  const stepped = Math.round(scale / CONSOLE_SCALE_STEP) * CONSOLE_SCALE_STEP
+  return Math.min(
+    CONSOLE_SCALE_MAX,
+    Math.max(CONSOLE_SCALE_MIN, Number(stepped.toFixed(1))),
+  )
+}
+
+async function setDeveloperConsoleScale(scale) {
+  const next = clampDeveloperConsoleScale(scale)
+  if (next === developerConsoleScale.value) return
+  developerConsoleScale.value = next
+  await nextTick()
+  clampDeveloperConsolePosition()
+}
+
+function zoomDeveloperConsole(delta) {
+  setDeveloperConsoleScale(developerConsoleScale.value + delta * CONSOLE_SCALE_STEP)
+}
+
+function onDeveloperConsoleWheel(event) {
+  if (!(event.ctrlKey || event.metaKey)) return
+  event.preventDefault()
+  zoomDeveloperConsole(event.deltaY < 0 ? 1 : -1)
+}
+
 async function showDeveloperConsole() {
   if (!consoleEnabled.value) return
-  developerConsoleOffset.value = { x: 0, y: 0 }
+  developerConsoleScale.value = 1
+  const { size, offset } = getDeveloperConsoleInitialGeometry()
+  developerConsoleSize.value = size
+  developerConsoleOffset.value = offset
   developerConsoleVisible.value = true
   await nextTick()
   clampDeveloperConsolePosition()
@@ -896,15 +1055,94 @@ function moveDeveloperConsole(event) {
   )
 }
 
+function endDeveloperConsoleResize(event) {
+  if (!developerConsoleResize || event.pointerId !== developerConsoleResize.pointerId) return
+  developerConsoleResize = null
+  developerConsoleResizing.value = false
+  if (
+    event.type !== 'lostpointercapture'
+    && event.currentTarget.hasPointerCapture?.(event.pointerId)
+  ) {
+    event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+}
+
+function startDeveloperConsoleResize(event, direction) {
+  if (event.button !== 0 || !developerConsoleRef.value) return
+  const rect = developerConsoleRef.value.getBoundingClientRect()
+  developerConsoleResize = {
+    pointerId: event.pointerId,
+    direction,
+    clientX: event.clientX,
+    clientY: event.clientY,
+    width: developerConsoleSize.value.width,
+    height: developerConsoleSize.value.height,
+    scale: developerConsoleScale.value,
+    left: rect.left,
+    top: rect.top,
+    right: rect.right,
+    bottom: rect.bottom,
+  }
+  developerConsoleResizing.value = true
+  event.currentTarget.setPointerCapture(event.pointerId)
+  event.preventDefault()
+}
+
+function resizeDeveloperConsole(event) {
+  if (!developerConsoleResize || event.pointerId !== developerConsoleResize.pointerId) return
+  const resize = developerConsoleResize
+  const deltaX = (event.clientX - resize.clientX) / resize.scale
+  const deltaY = (event.clientY - resize.clientY) / resize.scale
+  const width = resize.width + (
+    resize.direction.includes('e') ? deltaX
+      : resize.direction.includes('w') ? -deltaX
+        : 0
+  )
+  const height = resize.height + (
+    resize.direction.includes('s') ? deltaY
+      : resize.direction.includes('n') ? -deltaY
+        : 0
+  )
+  const size = clampDeveloperConsoleSize(width, height)
+  const visualWidth = size.width * resize.scale
+  const visualHeight = size.height * resize.scale
+  const centerX = resize.direction.includes('w')
+    ? resize.right - visualWidth / 2
+    : resize.direction.includes('e')
+      ? resize.left + visualWidth / 2
+      : (resize.left + resize.right) / 2
+  const centerY = resize.direction.includes('n')
+    ? resize.bottom - visualHeight / 2
+    : resize.direction.includes('s')
+      ? resize.top + visualHeight / 2
+      : (resize.top + resize.bottom) / 2
+
+  developerConsoleSize.value = size
+  developerConsoleOffset.value = constrainDeveloperConsoleOffset(
+    centerX - window.innerWidth / 2,
+    centerY - window.innerHeight / 2,
+    visualWidth,
+    visualHeight,
+  )
+  event.preventDefault()
+}
+
 function closeDeveloperConsole() {
   developerConsoleDrag = null
+  developerConsoleResize = null
   developerConsoleDragging.value = false
+  developerConsoleResizing.value = false
   developerConsoleVisible.value = false
 }
 
 function resetDeveloperConsole() {
   closeDeveloperConsole()
   developerConsoleOffset.value = { x: 0, y: 0 }
+  developerConsoleSize.value = {
+    width: CONSOLE_DEFAULT_WIDTH,
+    height: CONSOLE_DEFAULT_HEIGHT,
+  }
+  developerConsoleScale.value = 1
 }
 
 async function startContract() {
@@ -989,11 +1227,13 @@ function lowerFurnace() {
       if (!materialConsoleSigned.value) {
         setMaterialConsolePhase('ready')
         showContractStampHint()
+        playVoiceAnnouncement(materialsReadyVoiceAudio)
       }
       furnace.armReveal({
         color: cfg.value.color,
         onOpen: () => {
           stopFurnaceRevealAudio()
+          playVoiceAnnouncement(tradeUpProcessingVoiceAudio)
           playSound(furnaceReleaseAudio)
           playSound(furnaceLiftAudio)
         },
@@ -1032,6 +1272,7 @@ function lowerFurnace() {
           clearTimeout(materialConsoleResultTimer)
           materialConsoleResultTimer = setTimeout(() => {
             materialConsoleResultTimer = null
+            playVoiceAnnouncement(resultReadyVoiceAudio)
             showResultView()
           }, 850)
         },
@@ -1052,6 +1293,7 @@ function resetAll() {
   furnaceRumbling.value = false
   stopMaterialConsoleAudio()
   stopFurnaceRevealAudio()
+  stopVoiceAnnouncements()
   stopSound(paperAudio)
   stopSound(stampAudio)
   showBuilder.value = true
@@ -1084,7 +1326,7 @@ function setCardEl(el, i) {
 }
 
 onMounted(() => {
-  window.addEventListener('resize', clampDeveloperConsolePosition)
+  window.addEventListener('resize', clampDeveloperConsoleGeometry)
   // 熔炉常驻背景层，进入页面即打开待机
   if (furnaceRef.value) {
     furnace = createFurnace(furnaceRef.value)
@@ -1107,6 +1349,9 @@ onMounted(() => {
   materialAddAudioPool = prepareAudioPool(MATERIAL_ADD_SOUND_URL, 0.52)
   materialRemoveAudioPool = prepareAudioPool(MATERIAL_REMOVE_SOUND_URL, 0.46)
   materialsCompleteAudio = prepareAudio(MATERIALS_COMPLETE_SOUND_URL, 0.62)
+  materialsReadyVoiceAudio = prepareAudio(MATERIALS_READY_VOICE_URL, 0.85)
+  tradeUpProcessingVoiceAudio = prepareAudio(TRADE_UP_PROCESSING_VOICE_URL, 0.85)
+  resultReadyVoiceAudio = prepareAudio(RESULT_READY_VOICE_URL, 0.85)
   paperAudio = new Audio('/sfx/paper-rustle.wav')
   paperAudio.volume = 0.6
   paperAudio.preload = 'auto'
@@ -1116,7 +1361,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', clampDeveloperConsolePosition)
+  window.removeEventListener('resize', clampDeveloperConsoleGeometry)
   clearTimeout(materialConsoleResultTimer)
   clearTimeout(toastTimer)
   clearTimeout(inventoryRefreshTimer)
@@ -1128,6 +1373,7 @@ onBeforeUnmount(() => {
   contractAwaitingStamp = false
   stopMaterialConsoleAudio()
   stopFurnaceRevealAudio()
+  stopVoiceAnnouncements()
   stopSound(paperAudio)
   stopSound(stampAudio)
   contract?.dispose()
@@ -1635,10 +1881,14 @@ onBeforeUnmount(() => {
           v-if="developerConsoleVisible"
           ref="developerConsoleRef"
           class="cs2-console"
-          :class="{ dragging: developerConsoleDragging }"
+          :class="{
+            dragging: developerConsoleDragging,
+            resizing: developerConsoleResizing,
+          }"
           :style="developerConsoleStyle"
           role="dialog"
           aria-labelledby="developer-console-title"
+          @wheel="onDeveloperConsoleWheel"
         >
           <header
             class="cs2-console-titlebar"
@@ -1648,22 +1898,49 @@ onBeforeUnmount(() => {
             @pointercancel="endDeveloperConsoleDrag"
             @lostpointercapture="endDeveloperConsoleDrag"
           >
-            <span id="developer-console-title">Counter-Strike 2 - 控制台</span>
-            <button
-              type="button"
-              class="cs2-console-close"
-              aria-label="关闭控制台"
-              title="关闭控制台"
-              @pointerdown.stop
-              @click="closeDeveloperConsole"
-            >
-              ×
-            </button>
+            <span id="developer-console-title">元游猫 - 控制台</span>
+            <div class="cs2-console-actions">
+              <button
+                type="button"
+                class="cs2-console-zoom"
+                aria-label="缩小控制台"
+                title="缩小（Ctrl/⌘ + 滚轮）"
+                :disabled="developerConsoleScale <= CONSOLE_SCALE_MIN"
+                @pointerdown.stop
+                @click="zoomDeveloperConsole(-1)"
+              >
+                −
+              </button>
+              <span class="cs2-console-zoom-label" aria-live="polite">
+                {{ developerConsoleScaleLabel }}
+              </span>
+              <button
+                type="button"
+                class="cs2-console-zoom"
+                aria-label="放大控制台"
+                title="放大（Ctrl/⌘ + 滚轮）"
+                :disabled="developerConsoleScale >= CONSOLE_SCALE_MAX"
+                @pointerdown.stop
+                @click="zoomDeveloperConsole(1)"
+              >
+                +
+              </button>
+              <button
+                type="button"
+                class="cs2-console-close"
+                aria-label="关闭控制台"
+                title="关闭控制台"
+                @pointerdown.stop
+                @click="closeDeveloperConsole"
+              >
+                ×
+              </button>
+            </div>
           </header>
           <div class="cs2-console-log" role="log" aria-live="polite">
-            <p class="console-dim">Counter-Strike 2 developer console initialized.</p>
-            <p>Client connected to Steam datagram relay.</p>
-            <p class="console-info">[TradeUpContract] Contract acknowledged by game coordinator.</p>
+            <p class="console-dim">Yuanyoumao developer console initialized.</p>
+            <p>Client connected to Yuanyoumao datagram relay.</p>
+            <p class="console-info">[TradeUpContract] Contract acknowledged by Yuanyoumao coordinator.</p>
             <p>input_count: {{ selected.length }}</p>
             <p>
               input_rarity:
@@ -1673,9 +1950,21 @@ onBeforeUnmount(() => {
             <p class="console-warning">[ItemSchema] Generating trade-up result...</p>
             <p class="console-success">Trade-up request accepted.</p>
             <p class="console-prompt-line">
-              <span>]</span> cl_show_tradeup_result 1<span class="console-caret"></span>
+              <span>]</span> yym_show_tradeup_result 1<span class="console-caret"></span>
             </p>
           </div>
+          <span
+            v-for="direction in CONSOLE_RESIZE_DIRECTIONS"
+            :key="direction"
+            class="cs2-console-resize-handle"
+            :class="`resize-${direction}`"
+            aria-hidden="true"
+            @pointerdown.stop="startDeveloperConsoleResize($event, direction)"
+            @pointermove.stop="resizeDeveloperConsole"
+            @pointerup.stop="endDeveloperConsoleResize"
+            @pointercancel.stop="endDeveloperConsoleResize"
+            @lostpointercapture="endDeveloperConsoleResize"
+          ></span>
         </section>
       </Transition>
     </Teleport>
@@ -1826,10 +2115,10 @@ onBeforeUnmount(() => {
   left: 50%;
   top: 50%;
   z-index: 90;
-  width: min(920px, calc(100vw - 32px));
-  height: min(560px, 64dvh);
-  min-height: min(320px, calc(100dvh - 32px));
-  max-height: calc(100dvh - 32px);
+  width: var(--console-width, min(1180px, calc(100vw - 16px)));
+  height: var(--console-height, min(680px, calc(100dvh - 16px)));
+  min-width: 0;
+  min-height: 0;
   display: grid;
   grid-template-rows: 36px minmax(0, 1fr);
   overflow: hidden;
@@ -1846,8 +2135,9 @@ onBeforeUnmount(() => {
     calc(-50% + var(--console-offset-x)),
     calc(-50% + var(--console-offset-y)),
     0
-  );
-  will-change: transform;
+  ) scale(var(--console-scale, 1));
+  transform-origin: center center;
+  will-change: width, height, transform;
 }
 
 .cs2-console-titlebar {
@@ -1879,16 +2169,102 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 
+.cs2-console-actions {
+  display: flex;
+  align-items: stretch;
+  flex: 0 0 auto;
+  height: 100%;
+}
+
 .cs2-console.dragging,
 .cs2-console.dragging .cs2-console-titlebar {
   cursor: grabbing;
   user-select: none;
 }
 
+.cs2-console.resizing {
+  user-select: none;
+}
+
+.cs2-console-resize-handle {
+  position: absolute;
+  z-index: 6;
+  display: block;
+  touch-action: none;
+  user-select: none;
+}
+
+.cs2-console-resize-handle.resize-n,
+.cs2-console-resize-handle.resize-s {
+  left: 12px;
+  right: 12px;
+  height: 7px;
+}
+
+.cs2-console-resize-handle.resize-e,
+.cs2-console-resize-handle.resize-w {
+  top: 12px;
+  bottom: 12px;
+  width: 7px;
+}
+
+.cs2-console-resize-handle.resize-n {
+  top: 0;
+  cursor: ns-resize;
+}
+
+.cs2-console-resize-handle.resize-ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+.cs2-console-resize-handle.resize-e {
+  right: 0;
+  cursor: ew-resize;
+}
+
+.cs2-console-resize-handle.resize-se {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+
+.cs2-console-resize-handle.resize-s {
+  bottom: 0;
+  cursor: ns-resize;
+}
+
+.cs2-console-resize-handle.resize-sw {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+.cs2-console-resize-handle.resize-w {
+  left: 0;
+  cursor: ew-resize;
+}
+
+.cs2-console-resize-handle.resize-nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.cs2-console-resize-handle.resize-ne,
+.cs2-console-resize-handle.resize-se,
+.cs2-console-resize-handle.resize-sw,
+.cs2-console-resize-handle.resize-nw {
+  width: 13px;
+  height: 13px;
+}
+
+.cs2-console-zoom,
 .cs2-console-close {
-  width: 38px;
+  width: 34px;
   height: 36px;
-  flex: 0 0 38px;
+  flex: 0 0 34px;
   display: grid;
   place-items: center;
   border: 0;
@@ -1900,6 +2276,35 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 
+.cs2-console-zoom-label {
+  min-width: 44px;
+  display: grid;
+  place-items: center;
+  border-left: 1px solid rgba(0, 0, 0, 0.3);
+  color: #c4c8ca;
+  font: 600 11px/1 Consolas, 'Lucida Console', monospace;
+  letter-spacing: 0;
+}
+
+.cs2-console-zoom:hover,
+.cs2-console-zoom:focus-visible {
+  outline: none;
+  background: #4a5156;
+  color: #fff;
+}
+
+.cs2-console-zoom:disabled {
+  opacity: 0.35;
+  cursor: default;
+  background: transparent;
+  color: #d7dbdd;
+}
+
+.cs2-console-close {
+  width: 38px;
+  flex: 0 0 38px;
+}
+
 .cs2-console-close:hover,
 .cs2-console-close:focus-visible {
   outline: none;
@@ -1907,7 +2312,8 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 
-.cs2-console-close:focus-visible {
+.cs2-console-close:focus-visible,
+.cs2-console-zoom:focus-visible {
   box-shadow: inset 0 0 0 2px #fff;
 }
 
@@ -1974,7 +2380,7 @@ onBeforeUnmount(() => {
     calc(-50% + var(--console-offset-x)),
     calc(-50% + var(--console-offset-y) + 14px),
     0
-  ) scale(0.985);
+  ) scale(calc(var(--console-scale, 1) * 0.985));
 }
 
 @keyframes consoleCaretBlink {
@@ -1987,14 +2393,6 @@ onBeforeUnmount(() => {
     width: min(88vw, 430px);
     height: 82px;
     filter: blur(7px);
-  }
-}
-
-@media (max-width: 600px) {
-  .cs2-console {
-    height: calc(100dvh - 16px);
-    min-height: 0;
-    max-height: calc(100dvh - 16px);
   }
 }
 
