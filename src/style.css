@@ -723,7 +723,12 @@ body {
   background: #000 !important;
 }
 
-.app.furnace-rumbling {
+.app.furnace-rumbling::before,
+.app.furnace-rumbling > .furnace-layer,
+.app.furnace-rumbling > .furnace-base-shadow,
+.app.furnace-rumbling > .top,
+.app.furnace-rumbling > .layout,
+.app.furnace-rumbling > .toast {
   animation: furnaceRumble 120ms steps(2, end) infinite;
   will-change: translate;
 }
@@ -769,7 +774,12 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .app.furnace-rumbling,
+  .app.furnace-rumbling::before,
+  .app.furnace-rumbling > .furnace-layer,
+  .app.furnace-rumbling > .furnace-base-shadow,
+  .app.furnace-rumbling > .top,
+  .app.furnace-rumbling > .layout,
+  .app.furnace-rumbling > .toast,
   .app.impact-shake::before,
   .app.impact-shake > .furnace-layer,
   .app.impact-shake > .furnace-base-shadow,

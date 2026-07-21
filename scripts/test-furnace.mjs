@@ -52,6 +52,43 @@ async function readCanvasAlpha(page) {
   })
 }
 
+async function assertFurnaceViewportLock(page, name, viewport) {
+  const geometry = await page.evaluate(async () => {
+    window.scrollTo(0, document.documentElement.scrollHeight)
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+
+    const app = document.querySelector('.app')
+    const canvas = document.querySelector('.furnace-layer')
+    const rect = canvas?.getBoundingClientRect()
+    const background = app ? getComputedStyle(app, '::before') : null
+    return {
+      scrollY,
+      canvas: rect && {
+        top: rect.top,
+        bottom: rect.bottom,
+        width: rect.width,
+        height: rect.height,
+      },
+      backgroundHeight: background ? Number.parseFloat(background.height) : 0,
+    }
+  })
+  await page.evaluate(() => window.scrollTo(0, 0))
+  await waitForFrames(page)
+
+  const tolerance = 2
+  if (
+    (name === 'mobile' && geometry.scrollY < 1)
+    || !geometry.canvas
+    || Math.abs(geometry.canvas.top) > tolerance
+    || Math.abs(geometry.canvas.bottom - viewport.height) > tolerance
+    || Math.abs(geometry.canvas.width - viewport.width) > tolerance
+    || Math.abs(geometry.canvas.height - viewport.height) > tolerance
+    || Math.abs(geometry.backgroundHeight - viewport.height) > tolerance
+  ) {
+    throw new Error(`${name}: 熔炉层未锁定视口 ${JSON.stringify(geometry)}`)
+  }
+}
+
 async function screenshotStage(page, name, stage, delay = 0) {
   try {
     await page.waitForFunction(
@@ -167,6 +204,7 @@ async function runCase({ name, viewport }) {
   }
 
   await screenshotStage(page, name, 'thin', 140)
+  await assertFurnaceViewportLock(page, name, viewport)
   await setFurnaceTimeScale(page, 1)
   await screenshotStage(page, name, 'charge', name === 'desktop' ? 1100 : 800)
   await setFurnaceTimeScale(page, 1)
